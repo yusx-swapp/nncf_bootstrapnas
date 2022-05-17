@@ -57,17 +57,14 @@ def prepare_test_model(search_desc):
         "input_info": {"sample_size": search_desc.input_sizes},
         "bootstrapNAS": {
             "training": {
-                "elasticity": {
-                    "available_elasticity_dims": ["depth", "width"]
-                }
+                "batchnorm_adaptation": {
+                    "num_bn_adaptation_samples": 2
+                },
             },
             "search": {
                 "algorithm": "NSGA2",
                 "num_evals": 2,
-                "population": 1,
-                "batchnorm_adaptation": {
-                    "num_bn_adaptation_samples": 2
-                },
+                "population": 1
             }
         }
     }
@@ -168,29 +165,6 @@ class TestSearchAlgorithm:
         search = prepare_search_algorithm(nas_model_name)
         assert search.vars_upper == NAS_MODELS_SEARCH_ENCODING[nas_model_name]
         assert search.num_vars == len(NAS_MODELS_SEARCH_ENCODING[nas_model_name])
-
-    @pytest.mark.parametrize("bn_adapt_section_is_called", [False,True],
-                              ids=["section_with_zero_num_samples", "section_with_non_zero_num_samples"])
-    def test_bn_adapt(self, mocker, bn_adapt_section_is_called, tmp_path):
-        search_desc = SearchTestDesc(model_creator=ThreeConvModel,
-                                     algo_params={'width': {'min_width': 1, 'width_step': 1}},
-                                     input_sizes=ThreeConvModel.INPUT_SIZE,
-                                     )
-        nncf_network, ctrl, nncf_config = prepare_test_model(search_desc)
-        update_search_bn_adapt_section(nncf_config, bn_adapt_section_is_called)
-        bn_adapt_run_patch = mocker.patch(
-            "nncf.common.initialization.batchnorm_adaptation.BatchnormAdaptationAlgorithm.run")
-        ctrl.multi_elasticity_handler.enable_all()
-        search_algo = SearchAlgorithm(nncf_network, ctrl, nncf_config)
-
-        def fake_acc_eval(*unused):
-            return 0
-
-        search_algo.run(fake_acc_eval, mocker.MagicMock(spec=DataLoaderType), tmp_path)
-        if bn_adapt_section_is_called:
-            bn_adapt_run_patch.assert_called()
-        else:
-            bn_adapt_run_patch.assert_not_called()
 
 
 class TestSearchEvaluators:
