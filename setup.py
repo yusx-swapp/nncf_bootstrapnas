@@ -143,15 +143,17 @@ if "--all" in sys.argv:
 
 setup(
     name="nncf",
-    version=find_version(os.path.join(here, "nncf/version.py")),
+    # version=find_version(os.path.join(here, "nncf/version.py")),
+    version="BootstrapNAS",
     author="Intel",
-    author_email="alexander.kozlov@intel.com",
+    author_email="pablo.munoz@intel.com",
     description="Neural Networks Compression Framework",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/openvinotoolkit/nncf",
     packages=find_packages(exclude=["tests", "tests.*",
                                     "examples", "examples.*",
+                                    "nncf.experimental.torch.nas.bootstrapNAS.search", "nncf.experimental.torch.nas.bootstrapNAS.search.*",
                                     "tools", "tools.*"]),
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -164,7 +166,8 @@ setup(
               "quantization-aware-training", "hawq", "classification",
               "pruning", "object-detection", "semantic-segmentation", "nas", "nlp",
               "bert", "transformers", "mmdetection"],
-    include_package_data=True
+    include_package_data=True,
+    exclude_package_data={"nncf.experimental.torch.nas.bootstrapNAS.search": ["*.py"]},
 )
 
 path_to_ninja = glob.glob(str(sysconfig.get_paths()["purelib"]+"/ninja*/ninja/data/bin/"))
