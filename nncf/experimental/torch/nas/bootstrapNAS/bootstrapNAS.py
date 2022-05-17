@@ -28,5 +28,6 @@ class BootstrapNAS:
     def eval_subnet(self, config, eval_fn, **kwargs):
         m_handler = self._elasticity_ctrl.multi_elasticity_handler
         m_handler.activate_subnet_for_config(m_handler.get_config_from_pymoo(config))
-        return eval_fn(self._model, kwargs)
+        print(kwargs)
+        return eval_fn(self._model, **kwargs)
 
