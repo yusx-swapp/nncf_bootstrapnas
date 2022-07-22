@@ -25,6 +25,7 @@ from typing import TypeVar
 import numpy as np
 from pathlib import Path
 from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.algorithms.moo.rnsga2 import RNSGA2
 from pymoo.core.problem import Problem
 from pymoo.factory import get_crossover
 from pymoo.factory import get_mutation
@@ -63,7 +64,7 @@ ValFnType = Callable[
 
 class EvolutionaryAlgorithms(Enum):
     NSGA2 = 'NSGA2'
-
+    RNSGA2 = 'RNSGA2'
 
 class SearchParams:
     """
@@ -71,7 +72,9 @@ class SearchParams:
     """
     def __init__(self, num_evals: float, num_constraints: float, population: float,
                  seed: float, crossover_prob: float, crossover_eta: float,
-                 mutation_prob: float, mutation_eta: float, acc_delta: float, ref_acc: float):
+                 mutation_prob: float, mutation_eta: float, acc_delta: float, ref_acc: float,
+                 aspiration_points: np.ndarray, epsilon: float, weights: np.ndarray,
+                 extreme_points_as_ref_points: bool):
         """
         Initializes storage class for search parameters.
 
@@ -85,6 +88,10 @@ class SearchParams:
         :param mutation_eta: Mutation eta
         :param acc_delta: Tolerated accuracy delta to select a single sub-network from Pareto front.
         :param ref_acc: Accuracy of input model or reference.
+        :param aspiration_points: Aspiration or reference points for RNSGA-II.
+        :param epsilon: epsilon distance of surviving solutions for RNSGA-II .
+        :param weights: weights used by RNSGA-II
+        :param extreme_points_as_ref_points
         """
         self.num_constraints = num_constraints
         self.population = population
@@ -98,6 +105,10 @@ class SearchParams:
         self.mutation_eta = mutation_eta
         self.acc_delta = acc_delta
         self.ref_acc = ref_acc
+        self.aspiration_points = aspiration_points
+        self.epsilon = epsilon
+        self.weights = weights
+        self.extreme_points_as_ref_points = extreme_points_as_ref_points
 
     @classmethod
     def from_dict(cls, search_config: Dict[str, Any]) -> 'SearchParams':
@@ -117,10 +128,16 @@ class SearchParams:
         mutation_eta = search_config.get('mutation_eta', 3.0)
         acc_delta = search_config.get('acc_delta', 1)
         ref_acc = search_config.get('ref_acc', -1)
+        aspiration_points = search_config.get('aspiration_points', [[0, 0]])
+        aspiration_points = np.array(aspiration_points)
+        epsilon = search_config.get('epsilon', 0.001)
+        weights = search_config.get('weights', None)
+        extreme_points_as_ref_points = search_config.get('extreme_points_as_ref_points', False)
 
         return cls(num_evals, num_constraints, population,
                    seed, crossover_prob, crossover_eta,
-                   mutation_prob, mutation_eta, acc_delta, ref_acc)
+                   mutation_prob, mutation_eta, acc_delta, ref_acc,
+                   aspiration_points, epsilon, weights, extreme_points_as_ref_points)
 
 
 class BaseSearchAlgorithm:
@@ -192,10 +209,11 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._verbose = verbose
         self._top1_accuracy_validation_fn = None
         self._val_loader = None
-        evo_algo = search_config['algorithm']
-        if evo_algo == EvolutionaryAlgorithms.NSGA2.value:
+        self._algorithm_name = search_config['algorithm']
+        sampling = get_sampling("int_lhs")
+        if self._algorithm_name == EvolutionaryAlgorithms.NSGA2.value:
             self._algorithm = NSGA2(pop_size=self.search_params.population,
-                                    sampling=get_sampling("int_lhs"),
+                                    sampling=sampling,
                                     crossover=get_crossover("int_sbx", prob=self.search_params.crossover_prob,
                                                             eta=self.search_params.crossover_eta),
                                     mutation=get_mutation("int_pm", prob=self.search_params.mutation_prob,
@@ -203,8 +221,21 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                                     eliminate_duplicates=True,
                                     save_history=True,
                                     )
+        elif self._algorithm_name == EvolutionaryAlgorithms.RNSGA2.value:
+            self._algorithm = RNSGA2(ref_points=self.search_params.aspiration_points,
+                                     pop_size=self.search_params.population,
+                                     epsilon=self.search_params.epsilon,
+                                     normalization='front',
+                                     extreme_points_as_reference_points=self.search_params.extreme_points_as_ref_points,
+                                     sampling=sampling,
+                                     crossover=get_crossover("int_sbx", prob=self.search_params.crossover_prob,
+                                                             eta=self.search_params.crossover_eta),
+                                     mutation=get_mutation("int_pm", prob=self.search_params.mutation_prob,
+                                                           eta=self.search_params.mutation_eta),
+                                     weights=self.search_params.weights,
+                                     eliminate_duplicates=True)
         else:
-            raise NotImplementedError(f"Evolutionary Search Algorithm {evo_algo} not implemented")
+            raise NotImplementedError(f"Search Algorithm {evo_algo} not implemented")
         self._num_vars = 0
         self._vars_lower = 0
         self._vars_upper = []
@@ -380,6 +411,12 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         if None not in self.best_vals:
             plt.scatter(*tuple([abs(val) for val in self.best_vals]), marker='o', s=120,color='yellow', label='BootstrapNAS A',
                         edgecolors='black', linewidth=2.5)
+        if self._algorithm_name == EvolutionaryAlgorithms.RNSGA2.value:
+            for point in self._algorithm.survival.ref_points:
+                plt.scatter(point[0], point[1], marker='^', color='gray', label='Reference Points',
+                            edgecolors='black', linewidth=2.5)
+        plt.legend()
+        plt.title(f'Search Progression ({self._algorithm_name})')
         plt.xlabel(self.efficiency_evaluator_handler.name)
         plt.ylabel(self.accuracy_evaluator_handler.name)
         plt.savefig(f'{self._log_dir}/{filename}.png')
