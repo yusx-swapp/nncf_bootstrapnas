@@ -90,8 +90,8 @@ class SearchParams:
         :param ref_acc: Accuracy of input model or reference.
         :param aspiration_points: Aspiration or reference points for RNSGA-II.
         :param epsilon: epsilon distance of surviving solutions for RNSGA-II .
-        :param weights: weights used by RNSGA-II
-        :param extreme_points_as_ref_points
+        :param weights: weights used by RNSGA-II.
+        :param extreme_points_as_ref_points: Find extreme points and use them as aspiration points.
         """
         self.num_constraints = num_constraints
         self.population = population
