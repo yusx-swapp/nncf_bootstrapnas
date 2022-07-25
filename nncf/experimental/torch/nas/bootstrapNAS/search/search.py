@@ -236,7 +236,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                                      weights=self.search_params.weights,
                                      eliminate_duplicates=True)
         else:
-            raise NotImplementedError(f"Search Algorithm {evo_algo} not implemented")
+            raise NotImplementedError(f"Search Algorithm {self._algorithm_name} not implemented")
         self._num_vars = 0
         self._vars_lower = 0
         self._vars_upper = []
