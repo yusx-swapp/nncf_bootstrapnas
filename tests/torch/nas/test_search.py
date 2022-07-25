@@ -70,7 +70,7 @@ def prepare_test_model(search_desc, search_algo_name):
                 },
             },
             "search": {
-                "algorithm": search_algo_name, #"NSGA2",
+                "algorithm": search_algo_name,
                 "num_evals": 2,
                 "population": 1
             }
@@ -102,7 +102,6 @@ def prepare_search_algorithm(nas_model_name, search_algo_name):
     else:
         nncf_config['bootstrapNAS']['training']['elasticity'] = {
             'available_elasticity_dims': ['kernel', 'width', 'depth']}
-    # nncf_config['bootstrapNAS']['search'] = {"algorithm": "NSGA2", "num_evals": 2, "population": 1}
     nncf_config['bootstrapNAS']['search'] = {"algorithm": f"{search_algo_name}", "num_evals": 2, "population": 1}
     nncf_config = NNCFConfig.from_dict(nncf_config)
     model, ctrl = create_bootstrap_training_model_and_ctrl(model, nncf_config)
