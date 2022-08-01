@@ -245,7 +245,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             raise RuntimeError("Search space is empty")
 
         self._result = None
-        bn_adapt_params = nncf_config.get('compression', {}).get('initializer', {}).get('batchnorm_adaptation', {})
+        bn_adapt_params = search_config.get('batchnorm_adaptation', {})
         bn_adapt_algo_kwargs = get_bn_adapt_algo_kwargs(nncf_config, bn_adapt_params)
         self.bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adapt_algo_kwargs) if bn_adapt_algo_kwargs else None
 
