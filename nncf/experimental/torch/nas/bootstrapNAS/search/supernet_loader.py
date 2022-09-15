@@ -24,8 +24,12 @@ class SuperNetworkLoader:
             space[handler_id.value] = handler.get_search_space()
         return space
 
-    def eval_subnet(self, pymoo_config, eval_fn, **kwargs):
+    def eval_subnet_pymoo(self, pymoo_config, eval_fn, **kwargs):
         m_handler = self._elasticity_ctrl.multi_elasticity_handler
         m_handler.activate_subnet_for_config(m_handler.get_config_from_pymoo(pymoo_config))
         return eval_fn(self._model, **kwargs)
 
+    def eval_subnet(self, config, eval_fn, **kwargs):
+        m_handler = self._elasticity_ctrl.multi_elasticity_handler
+        m_handler.activate_subnet_for_config(config)
+        return eval_fn(self._model, **kwargs)
