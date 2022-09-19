@@ -19,6 +19,7 @@ from shutil import copyfile
 import torch
 from torch import nn
 
+from examples.experimental.torch.classification.bootstrap_nas import create_bn_adapt_data_loader
 from examples.torch.classification.main import create_data_loaders
 from examples.torch.classification.main import create_datasets
 from examples.torch.classification.main import get_argument_parser
@@ -112,9 +113,11 @@ def main_worker(current_gpu, config: SampleConfig):
 
     # Data loading code
     train_dataset, val_dataset = create_datasets(config)
-    train_loader, _, val_loader, _ = create_data_loaders(config, train_dataset, val_dataset)
+    bn_adapt_dataset = torch.utils.data.Subset(train_dataset, torch.randperm(len(train_dataset)))
+    _, _, val_loader, _ = create_data_loaders(config, train_dataset, val_dataset)
+    bn_adapt_loader = create_bn_adapt_data_loader(config, bn_adapt_dataset)
 
-    bn_adapt_args = BNAdaptationInitArgs(data_loader=wrap_dataloader_for_init(train_loader), device=config.device)
+    bn_adapt_args = BNAdaptationInitArgs(data_loader=wrap_dataloader_for_init(bn_adapt_loader), device=config.device)
     nncf_config.register_extra_structs([bn_adapt_args])
     # create model
     model = load_model(model_name,

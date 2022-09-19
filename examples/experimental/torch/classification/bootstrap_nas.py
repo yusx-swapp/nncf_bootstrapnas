@@ -27,6 +27,7 @@ from examples.torch.classification.main import train_epoch
 from examples.torch.classification.main import validate
 from examples.torch.common.argparser import parse_args
 from examples.torch.common.example_logger import logger
+from examples.torch.common.execution import ExecutionMode
 from examples.torch.common.execution import get_execution_mode
 from examples.torch.common.execution import set_seed
 from examples.torch.common.execution import start_worker
@@ -75,6 +76,16 @@ def cross_entropy_loss_with_soft_target(pred, soft_target):
 def cross_entropy_with_label_smoothing(pred, target, label_smoothing=0.1):
     soft_target = label_smooth(target, pred.size(1), label_smoothing)
     return cross_entropy_loss_with_soft_target(pred, soft_target)
+
+
+def create_bn_adapt_data_loader(config, bn_adapt_dataset):
+    pin_memory = config.execution_mode != ExecutionMode.CPU_ONLY
+
+    bn_adapt_loader = torch.utils.data.DataLoader(
+        bn_adapt_dataset, batch_size=config.batch_size, shuffle=False,
+        num_workers=config.workers, pin_memory=pin_memory, sampler=None, drop_last=True) #currently only support one GPU
+
+    return bn_adapt_loader
 
 
 def main(argv):
@@ -129,9 +140,11 @@ def main_worker(current_gpu, config: SampleConfig):
 
     # Data loading code
     train_dataset, val_dataset = create_datasets(config)
+    bn_adapt_dataset = torch.utils.data.Subset(train_dataset, torch.randperm(len(train_dataset)))
     train_loader, _, val_loader, _ = create_data_loaders(config, train_dataset, val_dataset)
+    bn_adapt_loader = create_bn_adapt_data_loader(config, bn_adapt_dataset)
 
-    bn_adapt_args = BNAdaptationInitArgs(data_loader=wrap_dataloader_for_init(train_loader), device=config.device)
+    bn_adapt_args = BNAdaptationInitArgs(data_loader=wrap_dataloader_for_init(bn_adapt_loader), device=config.device)
     nncf_config.register_extra_structs([bn_adapt_args])
     # create model
     model = load_model(model_name,

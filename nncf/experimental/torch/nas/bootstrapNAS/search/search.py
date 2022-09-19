@@ -362,6 +362,8 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                                                                             self._elasticity_ctrl)
         self._evaluator_handlers.append(self._efficiency_evaluator_handler)
         self._evaluator_handlers.append(self._accuracy_evaluator_handler)
+        self.maximal_vals = [evaluator_handler.current_value for evaluator_handler
+                                  in self._evaluator_handlers]
 
         self._problem = SearchProblem(self)
         self._result = minimize(self._problem, self._algorithm,
@@ -374,6 +376,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             self._elasticity_ctrl.multi_elasticity_handler.activate_subnet_for_config(self.best_config)
             if self.bn_adaptation is not None:
                 self.bn_adaptation.run(self._model)
+            self._model.load_state_dict(self._ori_model_state_dict)
             ret_vals = self.best_vals
         else:
             nncf_logger.warning("Couldn't find a subnet that satisfies the requirements. Returning maximum subnet.")
@@ -381,8 +384,9 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             self.bn_adaptation.run(self._model)
             self.best_config = self._elasticity_ctrl.multi_elasticity_handler.get_active_config()
             self.best_vals = [None, None]
+            ret_vals = self.maximal_vals
 
-        return self._elasticity_ctrl, self.best_config, [abs(elem) for elem in self.best_vals if elem is not None]
+        return self._elasticity_ctrl, self.best_config, [abs(elem) for elem in ret_vals if elem is not None]
 
     def visualize_search_progression(self, filename='search_progression') -> NoReturn:
         """
