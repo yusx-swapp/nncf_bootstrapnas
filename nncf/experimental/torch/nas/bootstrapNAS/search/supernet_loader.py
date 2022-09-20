@@ -1,5 +1,5 @@
+import os.path as osp
 import torch
-
 from nncf.experimental.torch.nas.bootstrapNAS.training.model_creator_helpers import resume_compression_from_state
 from nncf.torch.model_creation import create_nncf_network
 from nncf.torch.checkpoint_loading import load_state
@@ -11,11 +11,13 @@ class SuperNetworkLoader:
         compression_state = torch.load(supernet_path, map_location=torch.device(nncf_config.device))
         self._model, self._elasticity_ctrl = resume_compression_from_state(nncf_network, compression_state)
         model_weights = torch.load(supernet_weights, map_location=torch.device(nncf_config.device))
-
         load_state(model, model_weights, is_resume=True)
+        self._m_handler = self._elasticity_ctrl.multi_elasticity_handler
+        self._m_handler.activate_maximum_subnet()
+        self._m_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
 
     def get_search_space(self):
-        m_handler = self._elasticity_ctrl.multi_elasticity_handler
+        m_handler = self._m_handler
         active_handlers = {
             dim: m_handler._handlers[dim] for dim in m_handler._handlers if m_handler._is_handler_enabled_map[dim]
         }
@@ -25,11 +27,27 @@ class SuperNetworkLoader:
         return space
 
     def eval_subnet_pymoo(self, pymoo_config, eval_fn, **kwargs):
-        m_handler = self._elasticity_ctrl.multi_elasticity_handler
-        m_handler.activate_subnet_for_config(m_handler.get_config_from_pymoo(pymoo_config))
+        self._m_handler.activate_subnet_for_config(m_handler.get_config_from_pymoo(pymoo_config))
+        return eval_fn(self._model, **kwargs)
+
+    def eval_active_subnet(self, eval_fn, **kwargs):
         return eval_fn(self._model, **kwargs)
 
     def eval_subnet(self, config, eval_fn, **kwargs):
-        m_handler = self._elasticity_ctrl.multi_elasticity_handler
-        m_handler.activate_subnet_for_config(config)
-        return eval_fn(self._model, **kwargs)
+        self._m_handler.activate_subnet_for_config(config)
+        return self.eval_active_subnet(eval_fn, **kwargs)
+
+    def activate_config(self, config):
+        self._m_handler.activate_subnet_for_config(config)
+
+    def activate_maximal_subnet(self):
+        self._m_handler.activate_maximum_subnet()
+
+    def get_active_config(self):
+        return self._m_handler.get_active_config()
+
+    def get_macs(self):
+        return self._m_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
+
+    def export_active_to_onnx(self, filename='subnet'):
+        self._elasticity_ctrl.export_model(f"{filename}.onnx")
