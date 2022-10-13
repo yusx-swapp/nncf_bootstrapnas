@@ -212,7 +212,8 @@ def get_prunable_layers_in_out_channels(graph: NNCFGraph) -> Tuple[Dict[NNCFNode
     """
     in_channels, out_channels = {}, {}
     for node in graph.get_all_nodes():
-        if isinstance(node.layer_attributes, (ConvolutionLayerAttributes, LinearLayerAttributes, EmbeddingLayerAttributes)):
+        if isinstance(node.layer_attributes, (ConvolutionLayerAttributes, LinearLayerAttributes,
+                                              EmbeddingLayerAttributes)):
             name = node.node_name
             if name in in_channels and name in out_channels:
                 continue
