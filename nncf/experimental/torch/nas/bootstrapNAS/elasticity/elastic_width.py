@@ -1113,7 +1113,8 @@ class ElasticWidthBuilder(SingleElasticityBuilder):
     def _create_elastic_embedding_width_op(embedding_layer_attrs: BaseLayerAttributes,
                                            node_name: str,
                                            params: ElasticWidthParams,
-                                           fixed_width_list: Optional[List[int]] = None) -> ElasticOutputWidthEmbeddingOp:
+                                           fixed_width_list: Optional[List[int]] = None) -> \
+                                                                    ElasticOutputWidthEmbeddingOp:
         assert isinstance(embedding_layer_attrs, EmbeddingLayerAttributes)
         if fixed_width_list is None:
             fixed_width_list = []
