@@ -404,11 +404,11 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                         [abs(row[4]) for row in self.search_records][i:i+self.search_params.population],
                         s=9, c=c, alpha=0.5,
                         marker='D', cmap=colormap)
-
         plt.scatter(*tuple([abs(ev.input_model_value) for ev in self.evaluator_handlers]),
                     marker='s', s=120, color='blue', label='Input Model', edgecolors='black')
         if None not in self.best_vals:
-            plt.scatter(*tuple([abs(val) for val in self.best_vals]), marker='o', s=120,color='yellow', label='BootstrapNAS A',
+            plt.scatter(*tuple(abs(val) for val in self.best_vals),
+                        marker='o', s=120,color='yellow', label='BootstrapNAS A',
                         edgecolors='black', linewidth=2.5)
         if self._algorithm_name == EvolutionaryAlgorithms.RNSGA2.value:
             for point in self._algorithm.survival.ref_points:
