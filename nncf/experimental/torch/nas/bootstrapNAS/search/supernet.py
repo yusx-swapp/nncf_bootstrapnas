@@ -1,21 +1,27 @@
-import os.path as osp
 import torch
 from nncf.experimental.torch.nas.bootstrapNAS.training.model_creator_helpers import resume_compression_from_state
 from nncf.torch.model_creation import create_nncf_network
 from nncf.torch.checkpoint_loading import load_state
 
-class SuperNetworkLoader:
-    def __init__(self, model, nncf_config, supernet_path, supernet_weights):
-        nncf_network = create_nncf_network(model, nncf_config)
 
+class SuperNetwork:
+    def __init__(self, elastic_ctrl, nncf_network):
+        self._m_handler = elastic_ctrl.multi_elasticity_handler
+        self._elasticity_ctrl = elastic_ctrl
+        self._model = nncf_network
+
+    @classmethod
+    def from_checkpoint(cls, model, nncf_config, supernet_path, supernet_weights):
+        nncf_network = create_nncf_network(model, nncf_config)
         compression_state = torch.load(supernet_path, map_location=torch.device(nncf_config.device))
-        self._model, self._elasticity_ctrl = resume_compression_from_state(nncf_network, compression_state)
+        model, elasticity_ctrl = resume_compression_from_state(nncf_network, compression_state)
         model_weights = torch.load(supernet_weights, map_location=torch.device(nncf_config.device))
         load_state(model, model_weights, is_resume=True)
-        self._m_handler = self._elasticity_ctrl.multi_elasticity_handler
-        self._m_handler.activate_maximum_subnet()
+        elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         self._m_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
+        return SuperNetwork(elasticity_ctrl.multi_elasticity_handler)
 
+    # TODO: check if we can call m_handler directly.
     def get_search_space(self):
         m_handler = self._m_handler
         active_handlers = {
@@ -46,7 +52,7 @@ class SuperNetworkLoader:
     def get_active_config(self):
         return self._m_handler.get_active_config()
 
-    def get_macs(self):
+    def get_macs_for_active(self):
         return self._m_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
 
     def export_active_to_onnx(self, filename='subnet'):
