@@ -21,6 +21,7 @@ from typing import NoReturn
 from typing import Optional
 from typing import Tuple
 from typing import TypeVar
+from copy import deepcopy
 
 import numpy as np
 from pathlib import Path
@@ -201,6 +202,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         """
         super().__init__()
         self._model = model
+        self._ori_model_state_dict = deepcopy(model.state_dict())
         self._elasticity_ctrl = elasticity_ctrl
         self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         search_config = nncf_config.get('bootstrapNAS', {}).get('search', {})
@@ -374,14 +376,16 @@ class SearchAlgorithm(BaseSearchAlgorithm):
 
         if self.best_config is not None:
             self._elasticity_ctrl.multi_elasticity_handler.activate_subnet_for_config(self.best_config)
+            self._model.load_state_dict(self._ori_model_state_dict)
             if self.bn_adaptation is not None:
                 self.bn_adaptation.run(self._model)
-            self._model.load_state_dict(self._ori_model_state_dict)
             ret_vals = self.best_vals
         else:
             nncf_logger.warning("Couldn't find a subnet that satisfies the requirements. Returning maximum subnet.")
             self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-            self.bn_adaptation.run(self._model)
+            self._model.load_state_dict(self._ori_model_state_dict)
+            if self.bn_adaptation is not None:
+                self.bn_adaptation.run(self._model)
             self.best_config = self._elasticity_ctrl.multi_elasticity_handler.get_active_config()
             self.best_vals = [None, None]
             ret_vals = self.maximal_vals
@@ -474,6 +478,7 @@ class SearchProblem(Problem):
         self._accuracy_evaluator_handler = search.accuracy_evaluator_handler
         self._efficiency_evaluator_handler = search.efficiency_evaluator_handler
         self._model = search._model
+        self._ori_model_state_dict = search._ori_model_state_dict
         self._lower_bound_acc = search.search_params.ref_acc - search.acc_delta
 
     def _evaluate(self, x: List[float], out: Dict[str, Any], *args, **kargs) -> NoReturn:
@@ -505,7 +510,8 @@ class SearchProblem(Problem):
             for evaluator_handler in self._evaluator_handlers:
                 in_cache, value = evaluator_handler.retrieve_from_cache(tuple(x_i))
                 if not in_cache:
-                    if not bn_adaption_executed:
+                    if not bn_adaption_executed and self._search.bn_adaptation is not None:
+                        self._model.load_state_dict(self._ori_model_state_dict)
                         self._search.bn_adaptation.run(self._model)
                         bn_adaption_executed = True
                     value = evaluator_handler.evaluate_and_add_to_cache_from_pymoo(tuple(x_i))
