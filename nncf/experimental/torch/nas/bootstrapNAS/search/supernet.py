@@ -18,8 +18,8 @@ class SuperNetwork:
         model_weights = torch.load(supernet_weights, map_location=torch.device(nncf_config.device))
         load_state(model, model_weights, is_resume=True)
         elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-        self._m_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
-        return SuperNetwork(elasticity_ctrl.multi_elasticity_handler)
+        elasticity_ctrl.multi_elasticity_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
+        return SuperNetwork(elasticity_ctrl, model)
 
     # TODO: check if we can call m_handler directly.
     def get_search_space(self):
@@ -31,6 +31,9 @@ class SuperNetwork:
         for handler_id, handler in active_handlers.items():
             space[handler_id.value] = handler.get_search_space()
         return space
+
+    def get_design_vars_info(self):
+        self._m_handler.get_design_vars_info()
 
     def eval_subnet_pymoo(self, pymoo_config, eval_fn, **kwargs):
         self._m_handler.activate_subnet_for_config(m_handler.get_config_from_pymoo(pymoo_config))
@@ -52,7 +55,7 @@ class SuperNetwork:
     def get_active_config(self):
         return self._m_handler.get_active_config()
 
-    def get_macs_for_active(self):
+    def get_macs_for_active_config(self):
         return self._m_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
 
     def export_active_to_onnx(self, filename='subnet'):
