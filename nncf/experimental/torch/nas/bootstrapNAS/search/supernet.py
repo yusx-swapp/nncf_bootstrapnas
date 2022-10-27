@@ -35,8 +35,8 @@ class SuperNetwork:
     def get_design_vars_info(self):
         self._m_handler.get_design_vars_info()
 
-    def eval_subnet_pymoo(self, pymoo_config, eval_fn, **kwargs):
-        self._m_handler.activate_subnet_for_config(m_handler.get_config_from_pymoo(pymoo_config))
+    def eval_subnet_with_design_vars(self, design_config, eval_fn, **kwargs):
+        self._m_handler.activate_subnet_for_config(self._m_handler.get_config_from_pymoo(design_config))
         return eval_fn(self._model, **kwargs)
 
     def eval_active_subnet(self, eval_fn, **kwargs):
