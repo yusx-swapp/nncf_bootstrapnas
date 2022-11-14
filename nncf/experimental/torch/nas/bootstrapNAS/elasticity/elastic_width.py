@@ -482,9 +482,6 @@ class ElasticOutputWidthLinearOp(ElasticOutputWidthOp, nn.Module):
         new_bias = None if bias is None else bias[:self._active_width]
         return [weight[:self._active_width, :], new_bias]
 
-class EWHandlerStateNames:
-    WIDTH_NUM_PARAMS_INDICATOR = 'width_num_params_indicator'
-
 
 class ElasticOutputWidthEmbeddingOp(ElasticOutputWidthOp, nn.Module):
     """
