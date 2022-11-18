@@ -204,7 +204,6 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._model = model
         self._ori_model_state_dict = deepcopy(model.state_dict())
         self._elasticity_ctrl = elasticity_ctrl
-        self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         search_config = nncf_config.get('bootstrapNAS', {}).get('search', {})
         self.num_obj = None
         self.search_params = SearchParams.from_dict(search_config)
@@ -341,6 +340,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         :return: Elasticity controller with discovered sub-network, sub-network configuration and
                 its performance metrics.
         """
+        self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
         nncf_logger.info("Searching for optimal subnet.")
         if ref_acc != 100:
             self.search_params.ref_acc = ref_acc
@@ -408,7 +408,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
                         [abs(row[4]) for row in self.search_records][i:i+self.search_params.population],
                         s=9, c=c, alpha=0.5,
                         marker='D', cmap=colormap)
-        plt.scatter(*tuple([abs(ev.input_model_value) for ev in self.evaluator_handlers]),
+        plt.scatter(*tuple(abs(ev.input_model_value) for ev in self.evaluator_handlers),
                     marker='s', s=120, color='blue', label='Input Model', edgecolors='black')
         if None not in self.best_vals:
             plt.scatter(*tuple(abs(val) for val in self.best_vals),
