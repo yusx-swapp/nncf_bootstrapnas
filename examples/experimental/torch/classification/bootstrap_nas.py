@@ -220,7 +220,7 @@ def main_worker(current_gpu, config: SampleConfig):
         elasticity_ctrl.export_model(osp.join(config.log_dir, "best_subnet.onnx"))
 
     if 'test' in config.mode:
-        validate(val_loader, model, criterion, config)
+        validate(val_loader, nncf_network, criterion, config)
 
 
 if __name__ == '__main__':
