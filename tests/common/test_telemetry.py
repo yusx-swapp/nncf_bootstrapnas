@@ -65,7 +65,10 @@ def test_telemetry_is_mocked_if_env_vars_defined(env_var_to_define, hide_pytest)
     # cleanup
     importlib.reload(wrapper)
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> a79772e1 (Add telemetry to NNCF (#1339))
 @pytest.fixture(name="spies")
 def spies_(request, mocker) -> Tuple[MagicMock, MagicMock, MagicMock]:
     from nncf.telemetry import NNCFTelemetry

@@ -14,7 +14,10 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import NoReturn
+from typing import Optional
+from typing import Tuple
 
+from nncf.experimental.torch.nas.bootstrapNAS.elasticity.onnx_export import NASExporter
 
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
