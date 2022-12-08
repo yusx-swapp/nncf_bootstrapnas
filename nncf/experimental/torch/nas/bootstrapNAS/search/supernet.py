@@ -18,19 +18,11 @@ class SuperNetwork:
         model_weights = torch.load(supernet_weights, map_location=torch.device(nncf_config.device))
         load_state(model, model_weights, is_resume=True)
         elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-        elasticity_ctrl.multi_elasticity_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
+        elasticity_ctrl.multi_elasticity_handler.count_flops_and_weights_for_active_subnet()[0] / 2e6
         return SuperNetwork(elasticity_ctrl, model)
 
-    # TODO: check if we can call m_handler directly.
     def get_search_space(self):
-        m_handler = self._m_handler
-        active_handlers = {
-            dim: m_handler._handlers[dim] for dim in m_handler._handlers if m_handler._is_handler_enabled_map[dim]
-        }
-        space = {}
-        for handler_id, handler in active_handlers.items():
-            space[handler_id.value] = handler.get_search_space()
-        return space
+        return self._m_handler.get_search_space()
 
     def get_design_vars_info(self):
         self._m_handler.get_design_vars_info()
