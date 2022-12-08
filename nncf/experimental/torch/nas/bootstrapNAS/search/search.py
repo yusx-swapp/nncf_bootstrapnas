@@ -376,14 +376,12 @@ class SearchAlgorithm(BaseSearchAlgorithm):
 
         if self.best_config is not None:
             self._elasticity_ctrl.multi_elasticity_handler.activate_subnet_for_config(self.best_config)
-            self._model.load_state_dict(self._ori_model_state_dict)
             if self.bn_adaptation is not None:
                 self.bn_adaptation.run(self._model)
             ret_vals = self.best_vals
         else:
             nncf_logger.warning("Couldn't find a subnet that satisfies the requirements. Returning maximum subnet.")
             self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-            self._model.load_state_dict(self._ori_model_state_dict)
             if self.bn_adaptation is not None:
                 self.bn_adaptation.run(self._model)
             self.best_config = self._elasticity_ctrl.multi_elasticity_handler.get_active_config()
@@ -511,7 +509,6 @@ class SearchProblem(Problem):
                 in_cache, value = evaluator_handler.retrieve_from_cache(tuple(x_i))
                 if not in_cache:
                     if not bn_adaption_executed and self._search.bn_adaptation is not None:
-                        self._model.load_state_dict(self._ori_model_state_dict)
                         self._search.bn_adaptation.run(self._model)
                         bn_adaption_executed = True
                     value = evaluator_handler.evaluate_and_add_to_cache_from_pymoo(tuple(x_i))
