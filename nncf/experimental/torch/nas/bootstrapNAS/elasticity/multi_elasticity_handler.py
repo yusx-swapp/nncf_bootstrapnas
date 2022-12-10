@@ -209,7 +209,7 @@ class MultiElasticityHandler(ElasticityHandler):
             self._state_names.IS_HANDLER_ENABLED_MAP: is_handler_enabled_map
         }
 
-    def get_search_space(self):
+    def get_search_space(self) -> Dict[str, Any]:
         """
         Returns a dictionary with Python data structures (dict, list, tuple, str, int, float, True, False, None) that
         represents the search space of the super-network.
