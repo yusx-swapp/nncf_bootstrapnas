@@ -14,10 +14,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import NoReturn
-from typing import Optional
-from typing import Tuple
 
-from nncf.experimental.torch.nas.bootstrapNAS.elasticity.onnx_export import NASExporter
 
 from nncf.api.compression import CompressionLoss
 from nncf.api.compression import CompressionScheduler
@@ -171,7 +168,7 @@ class ProgressiveShrinkingController(BNASTrainingController):
             else:
                 self.multi_elasticity_handler.disable_elasticity(elasticity_dim)
 
-        nncf_logger.info(f"New stage with dimensions {stage_desc.train_dims}")
+        nncf_logger.debug(f"New stage with dimensions {stage_desc.train_dims}")
         width_handler = self.multi_elasticity_handler.width_handler
         depth_handler = self.multi_elasticity_handler.depth_handler
         if width_handler is not None:

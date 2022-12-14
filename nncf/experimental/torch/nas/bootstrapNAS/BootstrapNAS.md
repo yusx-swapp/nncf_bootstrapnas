@@ -135,7 +135,6 @@ For more information about BootstrapNAS and to cite this work, please refer to t
   url       = {https://arxiv.org/abs/2112.10878},
   eprinttype = {arXiv},
   eprint    = {2112.10878},
-  timestamp = {Tue, 04 Jan 2022 15:59:27 +0100},
   biburl    = {https://dblp.org/rec/journals/corr/abs-2112-10878.bib},
   bibsource = {dblp computer science bibliography, https://dblp.org}
 }

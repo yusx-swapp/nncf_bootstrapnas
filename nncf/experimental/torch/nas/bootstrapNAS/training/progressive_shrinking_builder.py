@@ -107,7 +107,7 @@ class ProgressiveShrinkingBuilder(PTCompressionAlgorithmBuilder):
         return {
             self._state_names.ELASTICITY_BUILDER_STATE: self._elasticity_builder.get_state(),
             self._state_names.PROGRESSIVITY_OF_ELASTICITY: [d.value for d in self._progressivity_of_elasticity],
-            self._state_names.BN_ADAPTATION_PARAMS: self._algo_config.get('batchnorm_adaptation', {})
+            self._state_names.BN_ADAPTATION_PARAMS: self._bn_adapt_params
         }
 
     def _load_state_without_name(self, state_without_name: Dict[str, Any]):
@@ -121,6 +121,7 @@ class ProgressiveShrinkingBuilder(PTCompressionAlgorithmBuilder):
         progressivity_of_elasticity = state_without_name[self._state_names.PROGRESSIVITY_OF_ELASTICITY]
         # No conflict resolving with the related config options, parameters are overridden by compression state
         self._progressivity_of_elasticity = [ElasticityDim.from_str(dim) for dim in progressivity_of_elasticity]
+        self._bn_adapt_params = state_without_name[self._state_names.BN_ADAPTATION_PARAMS]
         bn_adapt_algo_kwargs = get_bn_adapt_algo_kwargs(self.config,
-                                                        state_without_name[self._state_names.BN_ADAPTATION_PARAMS])
+                                                        self._bn_adapt_params)
         self._bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adapt_algo_kwargs) if bn_adapt_algo_kwargs else None

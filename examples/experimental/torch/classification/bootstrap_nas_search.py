@@ -113,6 +113,7 @@ def main_worker(current_gpu, config: SampleConfig):
 
     # Data loading code
     train_dataset, val_dataset = create_datasets(config)
+    # Only for running experiments with fixed set of subnets in batchnorm adapt - bootstrap_nas.py
     bn_adapt_dataset = torch.utils.data.Subset(train_dataset, torch.randperm(len(train_dataset)))
     _, _, val_loader, _ = create_data_loaders(config, train_dataset, val_dataset)
     bn_adapt_loader = create_bn_adapt_data_loader(config, bn_adapt_dataset)

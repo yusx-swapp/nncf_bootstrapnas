@@ -22,7 +22,6 @@ from torch import nn
 from nncf.common.graph import BaseLayerAttributes
 from nncf.common.graph import OperatorMetatype
 from nncf.common.graph.layer_attributes import ConvolutionLayerAttributes
-from nncf.common.graph.layer_attributes import EmbeddingLayerAttributes
 from nncf.common.graph.layer_attributes import GenericWeightedLayerAttributes
 from nncf.common.graph.layer_attributes import GroupNormLayerAttributes
 from nncf.common.graph.layer_attributes import LinearLayerAttributes
@@ -239,10 +238,10 @@ LIST_TEST_DESCS = [
     LayerAttributesTestDesc(
         module=nn.Embedding(2, 1),
         model_input_info_list=[ModelInputInfo([1, 1], type_str='long')],
-        layer_attributes=EmbeddingLayerAttributes(
+        layer_attributes=GenericWeightedLayerAttributes(
             weight_requires_grad=True,
-            num_embeddings=2,
-            embedding_dim=1),
+            weight_shape=Size([2, 1]),
+            filter_dimension_idx=0),
         metatype_cls=PTEmbeddingMetatype
     ),
     LayerAttributesTestDesc(

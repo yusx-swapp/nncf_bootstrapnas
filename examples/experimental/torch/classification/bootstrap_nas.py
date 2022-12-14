@@ -77,7 +77,7 @@ def cross_entropy_with_label_smoothing(pred, target, label_smoothing=0.1):
     soft_target = label_smooth(target, pred.size(1), label_smoothing)
     return cross_entropy_loss_with_soft_target(pred, soft_target)
 
-
+# Only for running experiments with fixed set for batchnorm adapt.
 def create_bn_adapt_data_loader(config, bn_adapt_dataset):
     pin_memory = config.execution_mode != ExecutionMode.CPU_ONLY
 

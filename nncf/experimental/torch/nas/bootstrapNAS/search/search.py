@@ -202,6 +202,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         """
         super().__init__()
         self._model = model
+        # Only for experiments to have subnets start with the same set of weights and then perform batchnorm adapt..
         self._ori_model_state_dict = deepcopy(model.state_dict())
         self._elasticity_ctrl = elasticity_ctrl
         search_config = nncf_config.get('bootstrapNAS', {}).get('search', {})
@@ -250,6 +251,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         bn_adapt_params = search_config.get('batchnorm_adaptation', {})
         bn_adapt_algo_kwargs = get_bn_adapt_algo_kwargs(nncf_config, bn_adapt_params)
         self.bn_adaptation = BatchnormAdaptationAlgorithm(**bn_adapt_algo_kwargs) if bn_adapt_algo_kwargs else None
+
         self._problem = None
         self.checkpoint_save_dir = None
         self.type_var = np.int
@@ -376,12 +378,14 @@ class SearchAlgorithm(BaseSearchAlgorithm):
 
         if self.best_config is not None:
             self._elasticity_ctrl.multi_elasticity_handler.activate_subnet_for_config(self.best_config)
+            self._model.load_state_dict(self._ori_model_state_dict)
             if self.bn_adaptation is not None:
                 self.bn_adaptation.run(self._model)
             ret_vals = self.best_vals
         else:
             nncf_logger.warning("Couldn't find a subnet that satisfies the requirements. Returning maximum subnet.")
             self._elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
+            self._model.load_state_dict(self._ori_model_state_dict)
             if self.bn_adaptation is not None:
                 self.bn_adaptation.run(self._model)
             self.best_config = self._elasticity_ctrl.multi_elasticity_handler.get_active_config()
@@ -509,6 +513,7 @@ class SearchProblem(Problem):
                 in_cache, value = evaluator_handler.retrieve_from_cache(tuple(x_i))
                 if not in_cache:
                     if not bn_adaption_executed and self._search.bn_adaptation is not None:
+                        self._model.load_state_dict(self._ori_model_state_dict)
                         self._search.bn_adaptation.run(self._model)
                         bn_adaption_executed = True
                     value = evaluator_handler.evaluate_and_add_to_cache_from_pymoo(tuple(x_i))
