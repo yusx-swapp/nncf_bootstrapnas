@@ -108,32 +108,21 @@ class LinearLayerAttributes(WeightedLayerAttributes):
     def __init__(self,
                  weight_requires_grad: bool,
                  in_features: int,
-                 out_features: int):
+                 out_features: int,
+                 bias: bool = True):
         super().__init__(weight_requires_grad)
         self.in_features = in_features
         self.out_features = out_features
+        self.bias = bias
 
     def get_weight_shape(self) -> List[int]:
         return [self.out_features, self.in_features]
 
+    def get_bias_shape(self) -> int:
+        return self.out_features if self.bias is True else 0
+
     def get_target_dim_for_compression(self) -> int:
         return 0
-
-
-class EmbeddingLayerAttributes(WeightedLayerAttributes):
-    def __init__(self,
-                 weight_requires_grad: bool,
-                 num_embeddings: int,
-                 embedding_dim: int):
-        super().__init__(weight_requires_grad)
-        self.num_embeddings = num_embeddings
-        self.embedding_dim = embedding_dim
-
-    def get_weight_shape(self) -> List[int]:
-        return [self.num_embeddings, self.embedding_dim]
-
-    def get_target_dim_for_compression(self) -> int:
-        return 1
 
 
 class ConvolutionLayerAttributes(WeightedLayerAttributes):
