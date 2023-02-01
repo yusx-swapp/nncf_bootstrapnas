@@ -24,7 +24,7 @@ from nncf.common.graph import NNCFNode
 from nncf.common.tensor_statistics.collectors import TensorStatisticCollectorBase
 from nncf.common.tensor_statistics.collectors import ReductionShape
 from nncf.common.utils.registry import Registry
-from nncf.common.graph.model_transformer import ModelTransformer
+
 
 TModel = TypeVar('TModel')
 OutputType = TypeVar('OutputType')
@@ -38,13 +38,6 @@ class FBCAlgoBackend(ABC):
     def operation_metatypes(self):
         """
         Property for the backend-specific metatypes.
-        """
-
-    @property
-    @abstractmethod
-    def layers_with_bias_metatypes(self):
-        """
-        Property for the backend-specific metatypes with bias.
         """
 
     @property
@@ -63,16 +56,6 @@ class FBCAlgoBackend(ABC):
 
     @staticmethod
     @abstractmethod
-    def model_transformer(model: TModel) -> ModelTransformer:
-        """
-        Returns backend-specific ModelTransformer instance.
-
-        :param model: Backend-specific model to create ModelTransformer.
-        :return: ModelTransformer instance.
-        """
-
-    @staticmethod
-    @abstractmethod
     def target_point(target_type: TargetType, target_node_name: str, port_id: int) -> TargetPoint:
         """
         Returns backend-specific target point.
@@ -85,16 +68,13 @@ class FBCAlgoBackend(ABC):
 
     @staticmethod
     @abstractmethod
-    def bias_correction_command(target_point: TargetPoint,
-                                bias_value: np.ndarray,
-                                threshold: float) -> TransformationCommand:
+    def create_bias_correction_command(node: NNCFNode, bias_value: np.ndarray):
         """
-        Returns backend-specific bias correction command.
+        Creates backend-specific command to update bias value.
 
-        :param target_point: Target location for the correction.
+        :param node: The node for which bias should be updated.
         :param bias_value: New value for the bias.
-        :param threshold: Parametrized threshold for the shift magnitude comparison.
-        :return: Backend-specific TransformationCommand for the bias correction.
+        :return: Backend-specific command to update bias value.
         """
 
     @staticmethod
@@ -145,24 +125,13 @@ class FBCAlgoBackend(ABC):
 
     @staticmethod
     @abstractmethod
-    def get_bias_value(model: TModel, node: NNCFNode) -> np.ndarray:
+    def get_bias_value(node: NNCFNode, model: TModel) -> np.ndarray:
         """
         Returns bias value in the NumPy format of provided node.
 
+        :param node: Node of NNCFGraph with bias value.
         :param model: Backend-specific model for the initializer finding.
-        :param node: Node of NNCFGraph with bias value.
         :return: Bias value in the NumPy format.
-        """
-
-    @staticmethod
-    @abstractmethod
-    def get_bias_port_id(model: TModel, node: NNCFNode) -> int:
-        """
-        Returns bias Port ID corresponding to the node.
-
-        :param model: Backend-specific model.
-        :param node: Node of NNCFGraph with bias value.
-        :return: Port ID corresponding to bias.
         """
 
     @staticmethod
