@@ -13,6 +13,7 @@
 
 import pytest
 import numpy as np
+import openvino.runtime as ov
 
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.graph.transformations.layout import TransformationLayout
@@ -22,8 +23,11 @@ from nncf.experimental.openvino_native.graph.transformations.commands import OVO
 from nncf.experimental.openvino_native.graph.transformations.commands import OVFQNodeRemovingCommand
 from nncf.experimental.openvino_native.graph.transformations.commands import OVQuantizerInsertionCommand
 from nncf.experimental.openvino_native.quantization.quantizer_parameters import OVQuantizerLayerParameters
+from nncf.experimental.openvino_native.graph.transformations.commands import OVBiasCorrectionCommand
 
 from tests.openvino.native.models import LinearModel
+from tests.openvino.native.models import ConvModel
+from tests.openvino.native.models import FPModel
 from tests.openvino.native.models import QuantizedModel
 from tests.openvino.native.common import compare_nncf_graphs
 from tests.openvino.conftest import OPENVINO_NATIVE_TEST_ROOT
@@ -162,3 +166,63 @@ def test_fq_insertion_weights(target_layers, ref_fq_names):
     assert len(fq_nodes) == len(ref_fq_names)
     for fq_name in fq_nodes:
         assert fq_name in ref_fq_names
+
+
+MODELS_WITH_PARAMETERS = [
+    {
+        'model': ConvModel().ov_model,
+        'layers': ['Conv'],
+        'values': [np.full((3,), 2)],
+        'refs': [2.0],
+    },
+    {
+        'model': FPModel(precision='FP16').ov_model,
+        'layers': ['MatMul'],
+        'values': [np.full((3,), 2)],
+        'refs': [2.0],
+    }
+]
+
+
+@pytest.mark.parametrize('model_with_parameters', MODELS_WITH_PARAMETERS)
+def test_bias_correction(model_with_parameters):
+    model = model_with_parameters['model']
+    layers = model_with_parameters['layers']
+    values = model_with_parameters['values']
+    refs = model_with_parameters['refs']
+
+    transformed_model = create_transformed_model(model, layers, TargetType.LAYER,
+                                                 OVBiasCorrectionCommand, port_id=1, **{'bias_value': values})
+    ops_dict = {op.get_friendly_name(): op for op in transformed_model.get_ops()}
+
+    for node_name, bias_reference in zip(layers, refs):
+        node = ops_dict[node_name]
+        node_inputs = [port.get_node() for port in node.output(0).get_target_inputs()]
+        node_with_bias = node_inputs[0]
+
+        potential_bias = node_with_bias.input_value(1).node
+        if potential_bias.get_type_name() == 'Convert':
+            potential_bias = potential_bias.input_value(0).node
+        assert potential_bias.get_type_name() == 'Constant'
+        assert np.all(potential_bias.get_vector() == bias_reference)
+
+
+def test_no_transformations():
+    def infer_model_with_ones(model, shape):
+        ie = ov.Core()
+        compiled_model = ie.compile_model(model)
+        _input = np.ones(shape)
+        model_outputs = compiled_model(_input)
+        return {out.get_node().get_friendly_name(): data for out, data in model_outputs.items()}
+
+    model = LinearModel().ov_model
+    input_shape = [1, 3, 4, 2]
+    model_transformer = OVModelTransformer(model)
+    transformed_model = model_transformer.transform(TransformationLayout())
+
+    ret_val_1 = infer_model_with_ones(model, input_shape)
+    ret_val_2 = infer_model_with_ones(transformed_model, input_shape)
+    assert ret_val_1.keys() == ret_val_2.keys()
+    for output in ret_val_1.keys():
+        assert np.allclose(ret_val_1[output], ret_val_2[output])
+    assert id(transformed_model) != id(model)

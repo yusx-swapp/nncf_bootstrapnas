@@ -10,7 +10,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """
-
+import functools
 from copy import deepcopy
 from typing import Callable
 from typing import List
@@ -82,6 +82,7 @@ def wrap_operator(operator, operator_info: 'PatchedOperatorInfo'):
         nncf_logger.debug(f"Operator: {_orig_op.__name__} is already wrapped")
         return operator
 
+    @functools.wraps(operator)
     def wrapped(*args, **kwargs):
         ctx = get_current_context()
         if not ctx or getattr(ctx, 'in_operator', False) or not ctx.is_tracing:
@@ -134,6 +135,7 @@ def wrap_module_call(module_call):
     from nncf.torch.dynamic_graph.patch_pytorch import ORIGINAL_OPERATORS #pylint: disable=cyclic-import
     NAMES_ORIGINAL_OPERATORS = [op.name for op in ORIGINAL_OPERATORS]
 
+    @functools.wraps(module_call)
     def wrapped(self, *args, **kwargs):
         ctx = get_current_context()
         if not ctx or self.__class__ in _IGNORED_SCOPES:
@@ -196,7 +198,7 @@ def _execute_op(op_address: 'OperationAddress',
         if is_debug() and node is not None:
             ctx.register_node_call(node)
 
-    result = trace_tensors(result, node)
+    result = trace_tensors(result, node, ctx)
     result = ctx.execute_post_hooks(op_address, result)
     return result
 
@@ -216,7 +218,6 @@ def _collect_module_attrs_and_ignored_algorithms(ctx: TracingContext,
     return layer_attrs, ignored_algos
 
 
-# pylint:disable=too-many-return-statements
 def _get_layer_attributes(module: TorchModule, operator_name: str) -> BaseLayerAttributes:
     if operator_name == "group_norm":
         return GroupNormLayerAttributes(

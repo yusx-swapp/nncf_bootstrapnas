@@ -214,7 +214,6 @@ class PTQuantizerSetup(QuantizerSetupBase):
         super().__init__()
         self.unified_scale_groups = unified_scale_groups
         self.shared_input_operation_set_groups = shared_input_operation_set_groups
-        self.quantization_points = {}  # type: Dict[QuantizationPointId, PTQuantizationPoint]
 
     @classmethod
     def from_state(cls, state: Dict) -> 'PTQuantizerSetup':
@@ -333,7 +332,6 @@ class BaseQuantizer(nn.Module):
         # TODO: refactor to get rid of extra if's and calls on each forward
         if not self.is_enabled_quantization():
             return x
-        self.set_level_ranges()
         is_exporting = is_tracing_state()
         if is_exporting:
             with no_nncf_trace():
@@ -389,6 +387,10 @@ class BaseQuantizer(nn.Module):
         raise NotImplementedError
 
     @property
+    def is_half_range(self):
+        return self._half_range
+
+    @property
     def is_using_log_scale_storage(self):
         return self._is_using_log_scale_storage
 
@@ -404,6 +406,7 @@ class BaseQuantizer(nn.Module):
     @num_bits.setter
     def num_bits(self, num_bits: int):
         self._num_bits.fill_(num_bits)
+        self.set_level_ranges()
 
     @property
     def narrow_range(self) -> bool:
@@ -435,6 +438,9 @@ class BaseQuantizer(nn.Module):
     def _prepare_qdq_export_quantization(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
         x, level_high, level_low, input_low, input_high = self._prepare_export_quantization(x)
         with no_jit_trace():
+            levels = level_high - level_low + 1
+            assert levels in [255, 256], "Can only export to INT8 256-level ONNX Quantize/Dequantize pairs"
+
             y_scale, y_zero_point = get_scale_zp_from_input_low_input_high(level_low,
                                                                            level_high,
                                                                            input_low,
@@ -486,6 +492,18 @@ class BaseQuantizer(nn.Module):
             numel *= el
         is_per_tensor = ((numel == 1) and (len(self.scale_shape) == 1))
         return not is_per_tensor
+
+    def get_parameters_for_torch_fq(self) -> Tuple[int, int, torch.Tensor, torch.Tensor]:
+        """
+        Get parameters for conversion to native FakeQuantize.
+
+        :return: A Tuple
+            quant_max - Fixed the low quant number.
+            quant_min - Fixed the high quant number.
+            scale - Quantizer scale.
+            zero_point - Quantizer zero point.
+        """
+        raise NotImplementedError
 
 
 class QuantizersSwitcher:
@@ -567,7 +585,7 @@ class SymmetricQuantizer(BaseQuantizer):
         else:
             self.eps = 1e-16
         if qspec.signedness_to_force is not None:
-            self.signed = int(qspec.signedness_to_force)
+            self.signed = bool(qspec.signedness_to_force)
         self.set_level_ranges()
 
         self._register_load_state_dict_pre_hook(StorageRedirectingLoadStateDictHook(
@@ -581,6 +599,9 @@ class SymmetricQuantizer(BaseQuantizer):
             name_in_state_dict=self.SCALE_PARAM_NAME,
             use_log_storage_in_module=self._is_using_log_scale_storage
         ))
+
+        # Values of level_low, level_high must be recalculated for load new signed parameter.
+        self.register_load_state_dict_post_hook(lambda module, _: module.set_level_ranges())
 
     @property
     def scale(self):
@@ -625,7 +646,8 @@ class SymmetricQuantizer(BaseQuantizer):
 
     @signed.setter
     def signed(self, signed: bool):
-        self.signed_tensor.fill_(signed)
+        self.signed_tensor.fill_(int(signed))
+        self.set_level_ranges()
 
     def quantize(self, x, execute_traced_op_as_identity: bool = False):
         return symmetric_quantize(x, self.levels, self.level_low, self.level_high, self.scale, self.eps,
@@ -639,7 +661,7 @@ class SymmetricQuantizer(BaseQuantizer):
         if self._signedness_to_force is not None and sign != self._signedness_to_force:
             nncf_logger.debug(f"Forcing signed to {self._signedness_to_force} for module {log_module_name}")
             sign = self._signedness_to_force
-        self.signed = int(sign)
+        self.signed = sign
 
         abs_max = torch.max(torch.abs(max_values), torch.abs(min_values))
         SCALE_LOWER_THRESHOLD = 0.1
@@ -656,6 +678,9 @@ class SymmetricQuantizer(BaseQuantizer):
         super().broadcast_initialized_params(src)
         distributed.broadcast(self._scale_param_storage, src=src)
         distributed.broadcast(self.signed_tensor, src=src)
+
+    def get_input_low_input_high(self):
+        return self._get_input_low_input_high(self.scale, self.level_low, self.level_high, self.eps)
 
     def _get_input_low_input_high(self, scale, level_low, level_high, eps):
         input_range = abs(scale) + eps
@@ -682,6 +707,35 @@ class SymmetricQuantizer(BaseQuantizer):
             if self._is_quantized_on_export:
                 x = self.quantize(x, execute_traced_op_as_identity=False)
         return x, level_high, level_low, input_low, input_high
+
+    def get_parameters_for_torch_fq(self) -> Tuple[int, int, torch.Tensor, torch.Tensor]:
+        """
+        Get parameters for conversion to native FakeQuantize.
+
+        :return: A Tuple
+            quant_max - Fixed the low quant number.
+            quant_min - Fixed the high quant number.
+            scale - Quantizer scale.
+            zero_point - Quantizer zero point.
+        """
+        with torch.no_grad():
+            input_low, input_high = self._get_input_low_input_high(self.scale,
+                                                                   self.level_low,
+                                                                   self.level_high,
+                                                                   self.eps)
+            level_low = self.level_low
+            level_high = self.level_high
+
+            scale, zero_point = get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, input_high)
+
+            if self._half_range:
+                level_low = 2 * self.level_low
+                level_high = 2 * self.level_high + 1
+
+            scale = scale.view(-1)
+            zero_point = zero_point.view(-1).to(dtype=torch.int32)
+
+        return level_low, level_high, scale, zero_point
 
     def get_quantizer_config(self) -> QuantizerConfig:
         return QuantizerConfig(num_bits=self.num_bits,
@@ -795,6 +849,9 @@ class AsymmetricQuantizer(BaseQuantizer):
         distributed.broadcast(self.input_low, src)
         distributed.broadcast(self._input_range_param_storage, src)
 
+    def get_input_low_input_high(self):
+        return self._get_input_low_input_high(self.input_range, self.input_low, self.levels, self.eps)
+
     def _get_input_low_input_high(self, input_range, input_low, levels, eps):
         input_range_safe = abs(input_range) + eps
         input_low, input_range_tuned = TuneRange.apply(input_low, input_range_safe, levels)
@@ -820,6 +877,35 @@ class AsymmetricQuantizer(BaseQuantizer):
             if self._is_quantized_on_export:
                 x = self.quantize(x, execute_traced_op_as_identity=False)
         return x, level_high, level_low, input_low, input_high
+
+    def get_parameters_for_torch_fq(self) -> Tuple[int, int, torch.Tensor, torch.Tensor]:
+        """
+        Get parameters for conversion to native FakeQuantize.
+
+        :return: A Tuple
+            quant_max - Fixed the low quant number.
+            quant_min - Fixed the high quant number.
+            scale - Quantizer scale.
+            zero_point - Quantizer zero point.
+        """
+        with torch.no_grad():
+            input_low, input_high = self._get_input_low_input_high(self.input_range,
+                                                                   self.input_low,
+                                                                   self.levels,
+                                                                   self.eps)
+            level_low = self.level_low
+            level_high = self.level_high
+
+            scale, zero_point = get_scale_zp_from_input_low_input_high(level_low, level_high, input_low, input_high)
+
+            if self._half_range:
+                level_low = 2 * level_low
+                level_high = 2 * level_high + 1
+
+            scale = scale.view(-1)
+            zero_point = zero_point.view(-1).to(dtype=torch.int32)
+
+        return level_low, level_high, scale, zero_point
 
     def get_quantizer_config(self) -> QuantizerConfig:
         return QuantizerConfig(num_bits=self.num_bits,

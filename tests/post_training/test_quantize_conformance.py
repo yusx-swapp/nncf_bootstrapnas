@@ -14,8 +14,12 @@ import copy
 import logging
 import os
 import re
+import traceback
 from pathlib import Path
+from pathlib import PosixPath
 from typing import Optional
+from multiprocessing import Process
+from multiprocessing import Pipe
 
 import numpy as np
 import onnx
@@ -23,17 +27,18 @@ import openvino.runtime as ov
 import pytest
 import timm
 import torch
-from model_scope import get_validation_scope
+from model_scope import VALIDATION_SCOPE
 from sklearn.metrics import accuracy_score
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
-from tqdm import tqdm
 
 import nncf
-from nncf.experimental.openvino_native.statistics.aggregator import OVStatisticsAggregator
-from nncf.quantization.algorithms.min_max.algorithm import MinMaxQuantization
-from nncf.quantization.algorithms.min_max.algorithm import MinMaxQuantizationParameters
+from nncf.experimental.openvino_native.quantization.quantize import quantize_impl as ov_quantize_impl
+from nncf.experimental.torch.quantization.quantize import quantize_impl as pt_impl_experimental
+from nncf.torch.nncf_network import NNCFNetwork
 from tests.shared.command import Command
+from conftest import PipelineType
+from conftest import RunInfo
 
 NOT_AVAILABLE_MESSAGE = 'N/A'
 DEFAULT_VAL_THREADS = 4
@@ -48,9 +53,15 @@ def create_timm_model(name):
 
 def get_model_transform(model):
     config = model.default_cfg
+    transformations_list = []
     normalize = transforms.Normalize(mean=config['mean'], std=config['std'])
     input_size = config['input_size']
-    resize_size = tuple(int(x / config['crop_pct']) for x in input_size[-2:])
+    if 'fixed_input_size' in config and not config['fixed_input_size']:
+        resize_size = tuple(int(x / config['crop_pct']) for x in input_size[-2:])
+        resize = transforms.Resize(resize_size,
+                                   interpolation=RESIZE_MODE_MAP[config['interpolation']])
+        transformations_list.append(resize)
+    transformations_list.extend([transforms.CenterCrop(input_size[-2:]), transforms.ToTensor(), normalize])
 
     RESIZE_MODE_MAP = {
         'bilinear': InterpolationMode.BILINEAR,
@@ -58,16 +69,7 @@ def get_model_transform(model):
         'nearest': InterpolationMode.NEAREST,
     }
 
-    transform = transforms.Compose(
-        [
-            transforms.Resize(
-                resize_size, interpolation=RESIZE_MODE_MAP[config['interpolation']]
-            ),
-            transforms.CenterCrop(input_size[-2:]),
-            transforms.ToTensor(),
-            normalize,
-        ]
-    )
+    transform = transforms.Compose(transformations_list)
 
     return transform
 
@@ -113,7 +115,6 @@ def benchmark_performance(model_path, model_name):
     """
     Receives the OpenVINO IR model and runs benchmark tool for it
     """
-
     model_perf = NOT_AVAILABLE_MESSAGE
 
     try:
@@ -125,10 +126,9 @@ def benchmark_performance(model_path, model_name):
             )
             model_perf = NOT_AVAILABLE_MESSAGE
     except BaseException as error:
-        logging.error(f'Error when becnhmarking the model: model_name Details: {error}')
+        logging.error(f'Error when becnhmarking the model: {model_name} Details: {error}')
 
     return model_perf
-
 
 def validate_accuracy(model_path, val_loader):
     dataset_size = len(val_loader)
@@ -149,7 +149,7 @@ def validate_accuracy(model_path, val_loader):
 
     infer_queue.set_callback(process_result)
 
-    for i, (images, target) in tqdm(enumerate(val_loader)):
+    for i, (images, target) in enumerate(val_loader):
         # W/A for memory leaks when using torch DataLoader and OpenVINO
         image_copies = copy.deepcopy(images.numpy())
         infer_queue.start_async(image_copies, userdata=i)
@@ -158,7 +158,6 @@ def validate_accuracy(model_path, val_loader):
     infer_queue.wait_all()
     predictions = np.concatenate(predictions, axis=0)
     references = np.concatenate(references, axis=0)
-
     return accuracy_score(predictions, references)
 
 
@@ -228,30 +227,186 @@ def quantize_ov_native(model: ov.Model,
                        ignored_scope: Optional[nncf.IgnoredScope] = None) -> ov.Model:
     if model_type is not None:
         RuntimeError('Model type is not supported')
-    
-    min_max_algo = MinMaxQuantization(
-        MinMaxQuantizationParameters(
-            number_samples=subset_size, 
-            preset=preset,
-            target_device=target_device,
-            ignored_scopes=ignored_scope))
-    
-    statistics_aggregator = OVStatisticsAggregator(calibration_dataset)
-    statistic_points = min_max_algo.get_statistic_points(model)
-    statistics_aggregator.register_stastistic_points(statistic_points)
-    statistics_aggregator.collect_statistics(model)
-    quantized_model = min_max_algo._apply(model, statistics_aggregator.statistic_points)
+
+    quantized_model = ov_quantize_impl(model,
+                                       calibration_dataset,
+                                       preset=preset,
+                                       target_device=target_device,
+                                       subset_size=subset_size,
+                                       fast_bias_correction=fast_bias_correction,
+                                       ignored_scope=ignored_scope)
     return quantized_model
 
 
-@pytest.mark.parametrize('model_args', get_validation_scope())
-def test_ptq_timm(data, output, result, model_args): # pylint: disable=W0703
+def quantize_torch_ptq(model: torch.nn.Module,
+                       calibration_dataset: nncf.Dataset,
+                       preset: nncf.QuantizationPreset = nncf.QuantizationPreset.PERFORMANCE,
+                       target_device: nncf.TargetDevice = nncf.TargetDevice.ANY,
+                       subset_size: int = 300,
+                       fast_bias_correction: bool = True,
+                       model_type: Optional[nncf.ModelType] = None,
+                       ignored_scope: Optional[nncf.IgnoredScope] = None) -> NNCFNetwork:
+
+    quantized_model = pt_impl_experimental(model, calibration_dataset,
+                                           preset, target_device,
+                                           subset_size, fast_bias_correction,
+                                           model_type, ignored_scope)
+    return quantized_model
+
+
+def torch_runner(model, calibration_dataset,
+                 model_quantization_params, output_folder,
+                 model_name, batch_one_dataloader) -> RunInfo:
+    torch_quantized_model = nncf.quantize(
+        model, calibration_dataset, **model_quantization_params
+    )
+    # benchmark quantized torch model
+    torch_output_path = output_folder / 'torch'
+    torch_output_path.mkdir(parents=True, exist_ok=True)
+    q_torch_model_name = model_name + '_torch_int8'
+    q_torch_perf, q_torch_acc = benchmark_torch_model(
+        torch_quantized_model,
+        batch_one_dataloader,
+        q_torch_model_name,
+        torch_output_path,
+    )
+    return RunInfo(q_torch_acc, q_torch_perf)
+
+
+def torch_ptq_runner(model, calibration_dataset,
+                     model_quantization_params, output_folder,
+                     model_name, batch_one_dataloader) -> RunInfo:
+    def transform_fn(data_item):
+        images, _ = data_item
+        return images
+
+    calibration_dataset = nncf.Dataset(batch_one_dataloader, transform_fn)
+
+    torch_quantized_model = quantize_torch_ptq(
+        model, calibration_dataset, **model_quantization_params
+    )
+    # benchmark quantized torch model
+    torch_output_path = output_folder / 'torch_ptq'
+    torch_output_path.mkdir(parents=True, exist_ok=True)
+    q_torch_model_name = model_name + '_torch_ptq_int8'
+    q_torch_ptq_perf, q_torch_ptq_acc = benchmark_torch_model(
+        torch_quantized_model,
+        batch_one_dataloader,
+        q_torch_model_name,
+        torch_output_path,
+    )
+
+    return RunInfo(q_torch_ptq_acc, q_torch_ptq_perf)
+
+
+def onnx_runner(model, calibration_dataset,
+                model_quantization_params, output_folder,
+                model_name, batch_one_dataloader):
+    onnx_model_path = output_folder / (model_name + '.onnx')
+    onnx_model = onnx.load(onnx_model_path)
+    onnx_input_name = onnx_model.graph.input[0].name
+
+    def onnx_transform_fn(data_item):
+        images, _ = data_item
+        return {onnx_input_name: images.numpy()}
+
+    onnx_calibration_dataset = nncf.Dataset(
+        batch_one_dataloader, onnx_transform_fn
+    )
+
+    onnx_quantized_model = nncf.quantize(
+        onnx_model, onnx_calibration_dataset, **model_quantization_params
+    )
+
+    onnx_output_path = output_folder / 'onnx'
+    onnx_output_path.mkdir(parents=True, exist_ok=True)
+    q_onnx_model_name = model_name + '_onnx_int8'
+    q_onnx_perf, q_onnx_acc = benchmark_onnx_model(
+        onnx_quantized_model,
+        batch_one_dataloader,
+        q_onnx_model_name,
+        onnx_output_path,
+    )
+    return RunInfo(q_onnx_acc, q_onnx_perf)
+
+
+def ov_native_runner(model, calibration_dataset,
+                     model_quantization_params, output_folder,
+                     model_name, batch_one_dataloader):
+    ov_native_model_path = output_folder / (model_name + '.xml')
+    core = ov.Core()
+    ov_native_model = core.read_model(ov_native_model_path)
+
+    input_names = set(inp.get_friendly_name() for inp in ov_native_model.get_parameters())
+    if len(input_names) != 1:
+        RuntimeError('Number of inputs != 1')
+
+    def ov_native_transform_fn(data_item):
+        images, _ = data_item
+        return {next(iter(input_names)): images.numpy()}
+
+    ov_native_calibration_dataset = nncf.Dataset(batch_one_dataloader, ov_native_transform_fn)
+
+    ov_native_quantized_model = quantize_ov_native(
+        ov_native_model, ov_native_calibration_dataset, **model_quantization_params
+    )
+
+    ov_native_output_path = output_folder / 'openvino_native'
+    ov_native_output_path.mkdir(parents=True, exist_ok=True)
+    q_ov_native_model_name = model_name + '_openvino_native_int8'
+    q_ov_native_perf, q_ov_native_acc = benchmark_ov_model(
+        ov_native_quantized_model,
+        batch_one_dataloader,
+        q_ov_native_model_name,
+        ov_native_output_path,
+    )
+    return RunInfo(q_ov_native_acc, q_ov_native_perf)
+
+
+def ov_runner(model, calibration_dataset,
+              model_quantization_params, output_folder,
+              model_name, batch_one_dataloader) -> RunInfo:
+    def ov_transform_fn(data_item):
+        images, _ = data_item
+        return images.numpy()
+
+    ov_calibration_dataset = nncf.Dataset(batch_one_dataloader, ov_transform_fn)
+
+    ov_model_path = output_folder / (model_name + '.xml')
+    core = ov.Core()
+    ov_model = core.read_model(ov_model_path)
+    ov_quantized_model = nncf.quantize(
+        ov_model, ov_calibration_dataset, **model_quantization_params
+    )
+
+    ov_output_path = output_folder / 'openvino'
+    ov_output_path.mkdir(parents=True, exist_ok=True)
+    q_ov_model_name = model_name + '_openvino_int8'
+    q_ov_perf, q_ov_acc = benchmark_ov_model(
+        ov_quantized_model,
+        batch_one_dataloader,
+        q_ov_model_name,
+        ov_output_path,
+    )
+    return RunInfo(q_ov_acc, q_ov_perf)
+
+
+RUNNERS = {
+    PipelineType.TORCH: torch_runner,
+    PipelineType.TORCH_PTQ: torch_ptq_runner,
+    PipelineType.ONNX: onnx_runner,
+    PipelineType.OV_NATIVE: ov_native_runner,
+    PipelineType.OV: ov_runner,
+}
+
+
+def run_ptq_timm(data, output, model_name, backends,
+                 model_quantization_params, process_connection): # pylint: disable=W0703
     torch.multiprocessing.set_sharing_strategy(
         'file_system'
     )  # W/A to avoid RuntimeError
 
-    model_name = model_args['name']
-    model_quantization_params = model_args['quantization_params']
+    runinfos = {}
     try:
         output_folder = Path(output)
         output_folder.mkdir(parents=True, exist_ok=True)
@@ -265,6 +420,7 @@ def test_ptq_timm(data, output, result, model_args): # pylint: disable=W0703
         orig_perf, orig_acc = benchmark_torch_model(
             model, batch_one_dataloader, model_name, output_folder
         )
+        runinfos[PipelineType.FP32] = RunInfo(orig_acc, orig_perf)
 
         val_dataloader = get_torch_dataloader(data, transform, batch_size=128)
 
@@ -274,135 +430,52 @@ def test_ptq_timm(data, output, result, model_args): # pylint: disable=W0703
 
         calibration_dataset = nncf.Dataset(val_dataloader, transform_fn)
 
-        # quantize PyTorch model
-        try:
-            torch_quantized_model = nncf.quantize(
-                model, calibration_dataset, **model_quantization_params
-            )
-            # benchmark quantized torch model
-            torch_output_path = output_folder / 'torch'
-            torch_output_path.mkdir(parents=True, exist_ok=True)
-            q_torch_model_name = model_name + '_torch_int8'
-            q_torch_perf, q_torch_acc = benchmark_torch_model(
-                torch_quantized_model,
-                batch_one_dataloader,
-                q_torch_model_name,
-                torch_output_path,
-            )
-        except Exception as error:
-            q_torch_perf = re.escape(str(error))
-            q_torch_acc = '-'
+        for backend in backends:
+            runner = RUNNERS[backend]
+            try:
+                runinfo = runner(model, calibration_dataset, model_quantization_params,
+                                 output_folder, model_name, batch_one_dataloader)
+            except Exception as error:
+                traceback_path = Path.joinpath(output_folder, backend.value, model_name + '_error_log.txt')
+                create_error_log(traceback_path)
+                status = get_error_msg(traceback_path, backend.value)
+                runinfo = RunInfo(-1, -1, status)
+            runinfos[backend] = runinfo
 
-        # quantize ONNX model
-        try:
-            onnx_model_path = output_folder / (model_name + '.onnx')
-            onnx_model = onnx.load(onnx_model_path)
-            onnx_input_name = onnx_model.graph.input[0].name
-
-            def onnx_transform_fn(data_item):
-                images, _ = data_item
-                return {onnx_input_name: images.numpy()}
-
-            onnx_calibration_dataset = nncf.Dataset(
-                batch_one_dataloader, onnx_transform_fn
-            )
-
-            onnx_quantized_model = nncf.quantize(
-                onnx_model, onnx_calibration_dataset, **model_quantization_params
-            )
-
-            onnx_output_path = output_folder / 'onnx'
-            onnx_output_path.mkdir(parents=True, exist_ok=True)
-            q_onnx_model_name = model_name + '_onnx_int8'
-            q_onnx_perf, q_onnx_acc = benchmark_onnx_model(
-                onnx_quantized_model,
-                batch_one_dataloader,
-                q_onnx_model_name,
-                onnx_output_path,
-            )
-        except Exception as error:
-            q_onnx_perf = re.escape(str(error))
-            q_onnx_acc = '-'
-
-        # quantize OpenVINO model using Native implementation
-        try:
-            ov_native_model_path = output_folder / (model_name + '.xml')
-            core = ov.Core()
-            ov_native_model = core.read_model(ov_native_model_path)
-
-            input_names = set(inp.get_friendly_name() for inp in ov_native_model.get_parameters())
-            if len(input_names) != 1:
-                RuntimeError('Number of inputs != 1')
-            
-            def ov_native_transform_fn(data_item):
-                images, _ = data_item
-                return {next(iter(input_names)): images.numpy()}
-
-            ov_native_calibration_dataset = nncf.Dataset(batch_one_dataloader, ov_native_transform_fn)
-
-            ov_native_quantized_model = quantize_ov_native(
-                ov_native_model, ov_native_calibration_dataset, **model_quantization_params
-            )
-
-            ov_native_output_path = output_folder / 'openvino_native'
-            ov_native_output_path.mkdir(parents=True, exist_ok=True)
-            q_ov_native_model_name = model_name + '_ov_native_int8'
-            q_ov_native_perf, q_ov_native_acc = benchmark_ov_model(
-                ov_native_quantized_model,
-                batch_one_dataloader,
-                q_ov_native_model_name,
-                ov_native_output_path,
-            )
-        except Exception as error:
-            q_ov_native_perf = re.escape(str(error))
-            q_ov_native_acc = '-'
-
-        # quantize OpenVINO model using POT implementation
-        try:
-            def ov_transform_fn(data_item):
-                images, _ = data_item
-                return images.numpy()
-
-            ov_calibration_dataset = nncf.Dataset(batch_one_dataloader, ov_transform_fn)
-
-            ov_model_path = output_folder / (model_name + '.xml')
-            core = ov.Core()
-            ov_model = core.read_model(ov_model_path)
-            ov_quantized_model = nncf.quantize(
-                ov_model, ov_calibration_dataset, **model_quantization_params
-            )
-
-            ov_output_path = output_folder / 'openvino'
-            ov_output_path.mkdir(parents=True, exist_ok=True)
-            q_ov_model_name = model_name + '_ov_int8'
-            q_ov_perf, q_ov_acc = benchmark_ov_model(
-                ov_quantized_model,
-                batch_one_dataloader,
-                q_ov_model_name,
-                ov_output_path,
-            )
-        except Exception as error:
-            q_ov_perf = re.escape(str(error))
-            q_ov_acc = '-'
-
-        result.append(
-            [
-                model_name,
-                orig_acc,
-                q_torch_acc,
-                q_onnx_acc,
-                q_ov_native_acc,
-                q_ov_acc,
-                orig_perf,
-                q_torch_perf,
-                q_onnx_perf,
-                q_ov_native_perf,
-                q_ov_perf,
-            ]
-        )
+        process_connection.send(runinfos)
     except Exception as error:
-        result.append([model_name, error, '-', '-', '-', '-', '-', '-', '-', '-', '-'])
-        logging.error(
-            f'Error when running test for model: {model_name}. Error: {error}'
-        )
+        traceback_path = Path.joinpath(output_folder, model_name + '_error_log.txt')
+        create_error_log(traceback_path)
+        status = f'{model_name} traceback: {traceback_path}'
+        runinfos[PipelineType.FP32] = RunInfo(-1, -1, status)
+        process_connection.send(runinfos)
+        raise error
+
+
+def create_error_log(traceback_path: PosixPath) -> None:
+    traceback_path.parents[0].mkdir(parents=True, exist_ok=True)
+    with open(traceback_path, 'w') as file:
+        traceback.print_exc(file=file)
+    file.close()
+    logging.error(traceback.format_exc())
+
+
+def get_error_msg(traceback_path: PosixPath, backend_name: str) -> str:
+    return f'{backend_name} traceback: {traceback_path}'
+
+
+@pytest.mark.parametrize('model_args', VALIDATION_SCOPE,
+                         ids=[desk['name'] for desk in VALIDATION_SCOPE])
+def test_ptq_timm(data, output, result, model_args, backends_list):  # pylint: disable=W0703
+    backends = [PipelineType[backend] for backend in backends_list.split(',')]
+    model_name = model_args['name']
+    quantization_params = model_args['quantization_params']
+    main_connection, process_connection = Pipe()
+    process = Process(target=run_ptq_timm,
+                      args=(data, output, model_name, backends,
+                            quantization_params, process_connection,))
+    process.start()
+    process.join()
+    result[model_name] = main_connection.recv()
+    if process.exitcode:
         assert False

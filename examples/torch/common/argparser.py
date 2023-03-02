@@ -11,7 +11,7 @@
  limitations under the License.
 """
 
-from examples.torch.common.sample_config import CustomArgumentParser
+from examples.common.sample_config import CustomArgumentParser
 from nncf.common.hardware.config import HWConfigType
 
 
@@ -173,6 +173,11 @@ def get_common_argument_parser():
 
     parser.add_argument('--to-onnx', type=str, metavar='PATH', default=None,
                         help='Export to ONNX model by given path')
+
+    parser.add_argument(
+        "--prepare-for-inference",
+        action='store_true',
+        help="Convert model to torch native format for export and test steps.")
 
     # Display
     parser.add_argument('-p', '--print-freq', default=10, type=int,

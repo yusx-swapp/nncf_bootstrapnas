@@ -32,7 +32,7 @@ from torchvision.models import resnet50
 from torchvision.transforms import transforms
 
 from examples.torch.classification.main import create_cifar
-from examples.torch.common.sample_config import SampleConfig
+from examples.common.sample_config import SampleConfig
 from examples.torch.object_detection.models.ssd_vgg import SSD_VGG
 from nncf.torch import register_default_init_args
 from nncf.torch.checkpoint_loading import load_state
@@ -74,9 +74,8 @@ from tests.torch.quantization.quantization_helpers import get_quantization_confi
 from tests.torch.quantization.quantization_helpers import get_squeezenet_quantization_config
 from tests.torch.quantization.quantization_helpers import post_compression_test_distr_init
 # pylint:disable=unused-import
-from tests.torch.modules.test_rnn import _seed
 from tests.torch.test_compressed_graph import get_full_path_to_the_graph
-from tests.common.graph.nx_graph import compare_nx_graph_with_reference
+from tests.shared.nx_graph import compare_nx_graph_with_reference
 from tests.torch.test_models import inception_v3
 from tests.torch.test_models import squeezenet1_1
 
