@@ -103,7 +103,7 @@ class GraphConverter:
             for output_port_id, out in enumerate(op.outputs()):
                 for inp in out.get_target_inputs():
                     out_node = inp.get_node()
-                    tensor_shape = list(out.shape)
+                    tensor_shape = list(out.partial_shape.get_max_shape())
                     output_node_id = graph.get_node_by_name(out_node.get_friendly_name()).node_id
                     ov_dtype = out.get_element_type().get_type_name()
                     nncf_dtype = GraphConverter.convert_to_nncf_dtype(ov_dtype)
@@ -142,7 +142,8 @@ class GraphConverter:
         """
         nncf_graph = NNCFGraph()
         visited = set()
-        inference_nodes = model.get_parameters()
+        read_value_nodes = [op for op in model.get_ops() if op.get_type_name() == 'ReadValue']
+        inference_nodes = model.get_parameters() + read_value_nodes
 
         while inference_nodes:
             node = inference_nodes[0]
