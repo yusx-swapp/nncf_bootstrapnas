@@ -162,11 +162,6 @@ class EmbeddingLayerAttributes(WeightedLayerAttributes):
 
 
 class ConvolutionLayerAttributes(WeightedLayerAttributes):
-    """
-    This class stores attributes of convolution modules/layers
-    that are useful for some algorithms.
-    """
-
     def __init__(self,
                  weight_requires_grad: bool,
                  in_channels: int,
