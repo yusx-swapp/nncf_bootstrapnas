@@ -1,30 +1,26 @@
-"""
- Copyright (c) 2023 Intel Corporation
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-      http://www.apache.org/licenses/LICENSE-2.0
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
-"""
+# Copyright (c) 2023 Intel Corporation
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#      http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from abc import ABC
 from abc import abstractmethod
-from typing import List, Any, Optional, TypeVar
+from typing import Any, List, Optional, TypeVar
 
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.operator_metatypes import OperatorMetatype
 
-
-TModel = TypeVar('TModel')
+TModel = TypeVar("TModel")
 
 
 class AccuracyControlAlgoBackend(ABC):
-
     # Metatypes
 
     @staticmethod
@@ -111,12 +107,11 @@ class AccuracyControlAlgoBackend(ABC):
 
     @staticmethod
     @abstractmethod
-    def get_weight_value(node_with_weight: NNCFNode, nncf_graph: NNCFGraph, model: TModel, port_id: int) -> Any:
+    def get_weight_value(node_with_weight: NNCFNode, model: TModel, port_id: int) -> Any:
         """
         Returns the weight value for the node with weight.
 
         :param node_with_weight: The node with weight.
-        :param nncf_graph: The NNCF graph.
         :param model: The model that contains this operation.
         :param port_id: The input port ID to get weight input.
         :return: The weight value.

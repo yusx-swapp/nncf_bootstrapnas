@@ -3,13 +3,12 @@ import inspect
 import torch
 
 from nncf.config import NNCFConfig
-from nncf.torch.dynamic_graph.patch_pytorch import MagicFunctionsToPatch
-from nncf.torch.dynamic_graph.patch_pytorch import _ORIG_JIT_SCRIPT
-from nncf.torch.graph.operator_metatypes import PT_OPERATOR_METATYPES
 from nncf.torch.dynamic_graph.context import TracingContext
-from nncf.torch.dynamic_graph.trace_tensor import TracedTensor
+from nncf.torch.dynamic_graph.patch_pytorch import _ORIG_JIT_SCRIPT
+from nncf.torch.dynamic_graph.patch_pytorch import MagicFunctionsToPatch
 from nncf.torch.dynamic_graph.trace_tensor import TensorMeta
-
+from nncf.torch.dynamic_graph.trace_tensor import TracedTensor
+from nncf.torch.graph.operator_metatypes import PT_OPERATOR_METATYPES
 from tests.shared.isolation_runner import run_pytest_case_function_in_separate_process
 from tests.torch.helpers import BasicConvTestModel
 from tests.torch.helpers import create_compressed_model_and_algo_for_test
@@ -26,14 +25,13 @@ def test_get_all_aliases_is_valid():
     for operator_metatypes, function_names in operator_names_to_function_name.items():
         if not function_names:
             invalid_metatypes.append(operator_metatypes)
-    assert not invalid_metatypes, \
-        f'There are metatypes with invalid `get_all_aliaces` method: {invalid_metatypes}'
+    assert not invalid_metatypes, f"There are metatypes with invalid `get_all_aliaces` method: {invalid_metatypes}"
 
 
 def test_are_all_magic_functions_patched():
     for operator in PT_OPERATOR_METATYPES.registry_dict:
         for function_name in PT_OPERATOR_METATYPES.get(operator).get_all_aliases():
-            if function_name.startswith('__') and function_name.endswith('__'):
+            if function_name.startswith("__") and function_name.endswith("__"):
                 is_contained = False
                 for _, functions in MagicFunctionsToPatch.MAGIC_FUNCTIONS_TO_PATCH.items():
                     if function_name in functions:
@@ -110,5 +108,5 @@ def test_jit_trace_model():
     compressed_model, compression_ctrl = create_compressed_model_and_algo_for_test(model, config)
     torch.jit.trace(compressed_model, example_inputs=torch.rand(model.INPUT_SIZE))
 
-    model = compression_ctrl.prepare_for_inference()
+    model = compression_ctrl.strip()
     torch.jit.trace(model, example_inputs=torch.rand(model.INPUT_SIZE))

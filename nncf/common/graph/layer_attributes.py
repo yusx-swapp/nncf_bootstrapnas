@@ -1,24 +1,23 @@
-"""
- Copyright (c) 2023 Intel Corporation
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-      http://www.apache.org/licenses/LICENSE-2.0
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
-"""
+# Copyright (c) 2023 Intel Corporation
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#      http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from abc import ABC
 from abc import abstractmethod
+from dataclasses import dataclass
 from enum import Enum
-from typing import List, Tuple, Any, Union
+from typing import Any, List, Tuple, Union
 
 
 class Dtype(Enum):
-    FLOAT = 'float'
-    INTEGER = 'int'
+    FLOAT = "float"
+    INTEGER = "int"
 
 
 class BaseLayerAttributes(ABC):
@@ -29,8 +28,7 @@ class BaseLayerAttributes(ABC):
 
 
 class MultipleInputLayerAttributes(BaseLayerAttributes):
-    def __init__(self,
-                 axis: int):
+    def __init__(self, axis: int):
         """
 
         :param axis: the dimension over which the inputs are combined (e.g. concatenated).
@@ -38,14 +36,11 @@ class MultipleInputLayerAttributes(BaseLayerAttributes):
         self.axis = axis
 
     def __eq__(self, other: Any):
-        return isinstance(other, MultipleInputLayerAttributes) \
-               and self.axis == other.axis
+        return isinstance(other, MultipleInputLayerAttributes) and self.axis == other.axis
 
 
 class MultipleOutputLayerAttributes(BaseLayerAttributes):
-    def __init__(self,
-                 chunks: Union[int, List],
-                 axis: int):
+    def __init__(self, chunks: Union[int, List], axis: int):
         """
 
         :param chunks:  number of chunks (outputs)
@@ -55,9 +50,9 @@ class MultipleOutputLayerAttributes(BaseLayerAttributes):
         self.axis = axis
 
     def __eq__(self, other: Any):
-        return isinstance(other, MultipleOutputLayerAttributes) \
-               and self.chunks == other.chunks \
-               and self.axis == other.axis
+        return (
+            isinstance(other, MultipleOutputLayerAttributes) and self.chunks == other.chunks and self.axis == other.axis
+        )
 
 
 class WeightedLayerAttributes(BaseLayerAttributes):
@@ -72,8 +67,7 @@ class WeightedLayerAttributes(BaseLayerAttributes):
         self.dtype = dtype
 
     def __eq__(self, other: Any):
-        return isinstance(other, WeightedLayerAttributes) \
-               and self.weight_requires_grad == other.weight_requires_grad
+        return isinstance(other, WeightedLayerAttributes) and self.weight_requires_grad == other.weight_requires_grad
 
     @abstractmethod
     def get_weight_shape(self) -> List[int]:
@@ -94,10 +88,7 @@ class GenericWeightedLayerAttributes(WeightedLayerAttributes):
     of the exact meaning of the weight indices.
     """
 
-    def __init__(self,
-                 weight_requires_grad: bool,
-                 weight_shape: List[int],
-                 filter_dimension_idx: int = 0):
+    def __init__(self, weight_requires_grad: bool, weight_shape: List[int], filter_dimension_idx: int = 0):
         """
 
         :param weight_requires_grad: Is True if gradients need to be computed for the corresponding Tensor,
@@ -117,11 +108,7 @@ class GenericWeightedLayerAttributes(WeightedLayerAttributes):
 
 
 class LinearLayerAttributes(WeightedLayerAttributes):
-    def __init__(self,
-                 weight_requires_grad: bool,
-                 in_features: int,
-                 out_features: int,
-                 bias: bool = True):
+    def __init__(self, weight_requires_grad: bool, in_features: int, out_features: int, bias: bool = True):
         """
 
         :param weight_requires_grad: Is True if gradients need to be computed for the corresponding Tensor,
@@ -162,15 +149,17 @@ class EmbeddingLayerAttributes(WeightedLayerAttributes):
 
 
 class ConvolutionLayerAttributes(WeightedLayerAttributes):
-    def __init__(self,
-                 weight_requires_grad: bool,
-                 in_channels: int,
-                 out_channels: int,
-                 kernel_size: Tuple[int, ...],
-                 stride: Tuple[int, ...],
-                 groups: int,
-                 transpose: bool,
-                 padding_values: Tuple[int, ...]):
+    def __init__(
+        self,
+        weight_requires_grad: bool,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: Tuple[int, ...],
+        stride: Tuple[int, ...],
+        groups: int,
+        transpose: bool,
+        padding_values: Tuple[int, ...],
+    ):
         """
 
         :param weight_requires_grad: Is True if gradients need to be computed for the corresponding Tensor,
@@ -193,14 +182,16 @@ class ConvolutionLayerAttributes(WeightedLayerAttributes):
         self.padding_values = padding_values
 
     def __eq__(self, other: Any):
-        return isinstance(other, ConvolutionLayerAttributes) \
-               and super().__eq__(other) \
-               and self.in_channels == other.in_channels \
-               and self.out_channels == other.out_channels \
-               and self.kernel_size == other.kernel_size \
-               and self.stride == other.stride \
-               and self.groups == other.groups \
-               and self.transpose == other.transpose
+        return (
+            isinstance(other, ConvolutionLayerAttributes)
+            and super().__eq__(other)
+            and self.in_channels == other.in_channels
+            and self.out_channels == other.out_channels
+            and self.kernel_size == other.kernel_size
+            and self.stride == other.stride
+            and self.groups == other.groups
+            and self.transpose == other.transpose
+        )
 
     def get_weight_shape(self) -> List[int]:
         if not self.transpose:
@@ -215,10 +206,7 @@ class ConvolutionLayerAttributes(WeightedLayerAttributes):
 
 
 class GroupNormLayerAttributes(WeightedLayerAttributes):
-    def __init__(self,
-                 weight_requires_grad: bool,
-                 num_channels: int,
-                 num_groups: int):
+    def __init__(self, weight_requires_grad: bool, num_channels: int, num_groups: int):
         """
 
         :param weight_requires_grad: Is True if gradients need to be computed for the corresponding Tensor,
@@ -231,10 +219,12 @@ class GroupNormLayerAttributes(WeightedLayerAttributes):
         self.num_groups = num_groups
 
     def __eq__(self, other: Any):
-        return isinstance(other, GroupNormLayerAttributes) \
-               and super().__eq__(other) \
-               and self.num_channels == other.num_channels \
-               and self.num_groups == other.num_groups
+        return (
+            isinstance(other, GroupNormLayerAttributes)
+            and super().__eq__(other)
+            and self.num_channels == other.num_channels
+            and self.num_groups == other.num_groups
+        )
 
     def get_weight_shape(self) -> List[int]:
         return [self.num_channels]
@@ -243,57 +233,68 @@ class GroupNormLayerAttributes(WeightedLayerAttributes):
         return 0
 
 
+@dataclass
 class ReshapeLayerAttributes(BaseLayerAttributes):
-    def __init__(self,
-                 input_shape: List[int],
-                 output_shape: List[int]):
-        """
+    """
+    :param input_shape: number of elements of each of the axes of a input tensor.
+    :param output_shape: number of elements of each of the axes of a output tensor.
+    """
 
-        :param input_shape: number of elements of each of the axes of a input tensor.
-        :param output_shape: number of elements of each of the axes of a output tensor.
-        """
-        self.input_shape = input_shape
-        self.output_shape = output_shape
+    input_shape: List[int]
+    output_shape: List[int]
 
 
+@dataclass
 class TransposeLayerAttributes(BaseLayerAttributes):
-    def __init__(self,
-                 dim0: int,
-                 dim1: int):
-        """
+    """
+    :param dim0: the first dimension to be transposed.
+    :param dim1: the second dimension to be transposed.
+    """
 
-        :param dim0: the first dimension to be transposed.
-        :param dim1: the second dimension to be transposed.
-        """
-        self.dim0 = dim0
-        self.dim1 = dim1
+    dim0: int
+    dim1: int
 
     def __eq__(self, other: Any) -> bool:
-        return isinstance(other, TransposeLayerAttributes) \
-               and super().__eq__(other) \
-               and self.dim0 == other.dim0 \
-               and self.dim1 == other.dim1
+        return (
+            isinstance(other, TransposeLayerAttributes)
+            and super().__eq__(other)
+            and self.dim0 == other.dim0
+            and self.dim1 == other.dim1
+        )
 
 
+@dataclass
 class PermuteLayerAttributes(BaseLayerAttributes):
-    def __init__(self,
-                 permutation: List[int]):
-        """
+    """
+    :param permutation: the desired ordering of dimensions.
+    """
 
-        :param permutation: the desired ordering of dimensions.
-        """
-        self.permutation = permutation
+    permutation: List[int]
 
     def __eq__(self, other: Any) -> bool:
-        return isinstance(other, PermuteLayerAttributes) \
-               and super().__eq__(other) \
-               and len(self.permutation) == len(other.permutation) \
-               and (l == r for l, r in zip(self.permutation, other.permutation))
+        return (
+            isinstance(other, PermuteLayerAttributes)
+            and super().__eq__(other)
+            and len(self.permutation) == len(other.permutation)
+            and (l == r for l, r in zip(self.permutation, other.permutation))
+        )
 
+
+@dataclass
 class GetItemLayerAttributes(BaseLayerAttributes):
-    def __init__(self, key: Any):
-        """
+    """
+    :param key: usually int, tuple of int or slice.
+    """
 
-        :param key: usually int, tuple of int or slice.
-        """
-        self.key = key
+    key: Any
+
+
+@dataclass
+class PadLayerAttributes(BaseLayerAttributes):
+    """
+    :param mode: mode of the padding operation.
+    :param value: fill value of the padding operation.
+    """
+
+    mode: str = "constant"
+    value: float = 0
