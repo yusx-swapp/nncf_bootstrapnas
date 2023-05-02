@@ -167,7 +167,7 @@ def main_worker(current_gpu, config: SampleConfig):
 
     def train_epoch_fn(loader, model_, compression_ctrl, epoch, optimizer_):
         train_epoch(
-    loader,
+            loader,
             model_,
             criterion,
             train_criterion_fn,
