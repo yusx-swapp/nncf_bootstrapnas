@@ -44,6 +44,9 @@ class SuperNetwork:
     def activate_maximal_subnet(self):
         self._m_handler.activate_maximum_subnet()
 
+    def activate_minimal_subnet(self):
+        self._m_handler.activate_minimum_subnet()
+
     def get_active_config(self):
         return self._m_handler.get_active_config()
 
@@ -52,3 +55,9 @@ class SuperNetwork:
 
     def export_active_to_onnx(self, filename='subnet'):
         self._elasticity_ctrl.export_model(f"{filename}.onnx")
+
+    def get_config_from_pymoo(self, pymoo_config):
+        return self._m_handler.get_config_from_pymoo(pymoo_config)
+
+    def get_active_subnet(self):
+        return self._model
