@@ -16,13 +16,32 @@ from nncf.torch.checkpoint_loading import load_state
 
 
 class SuperNetwork:
+    """
+        An interface for handling pre-trained super-networks. This class can be used to quickly implement
+        third party solutions for subnetwork search on existing super-netwroks. 
+    """
     def __init__(self, elastic_ctrl, nncf_network):
+        """
+        Initializes the super-network interface.
+
+        :param elastic_ctrl: Elasticity controller to activate subnetworks
+        :param nncf_network: NNCFNetwork that wraps the original PyTorch model.
+        """
         self._m_handler = elastic_ctrl.multi_elasticity_handler
         self._elasticity_ctrl = elastic_ctrl
         self._model = nncf_network
 
     @classmethod
     def from_checkpoint(cls, model, nncf_config, supernet_path, supernet_weights):
+        """
+        Loads existing super-network weights and elasticity information, and creates the SuperNetwork interface.
+
+        :param model: base model that was used to create the super-network.
+        :param nncf_config: configuration used to create the super-network.
+        :param supernet_path: path to file containing state information about the super-network.
+        :param supernet_weights: trained weights to resume the super-network.
+        :return: SuperNetwork with wrapped functionality.
+        """
         nncf_network = create_nncf_network(model, nncf_config)
         compression_state = torch.load(supernet_path, map_location=torch.device(nncf_config.device))
         model, elasticity_ctrl = resume_compression_from_state(nncf_network, compression_state)
