@@ -19,7 +19,7 @@ from nncf.torch.model_creation import create_nncf_network
 class SuperNetwork:
     """
     An interface for handling pre-trained super-networks. This class can be used to quickly implement
-    third party solutions for subnetwork search on existing super-netwroks.
+    third party solutions for subnetwork search on existing super-networks.
     """
 
     def __init__(self, elastic_ctrl, nncf_network):
@@ -83,7 +83,7 @@ class SuperNetwork:
         return self._m_handler.get_active_config()
 
     def get_macs_for_active_config(self):
-        return self._m_handler.count_flops_and_weights_for_active_subnet()[0] / 2000000
+        return self._m_handler.count_flops_and_weights_for_active_subnet()[0] / 2e6
 
     def export_active_to_onnx(self, filename="subnet"):
         self._elasticity_ctrl.export_model(f"{filename}.onnx")
