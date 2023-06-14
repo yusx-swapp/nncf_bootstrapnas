@@ -10,19 +10,20 @@
 # limitations under the License.
 import csv
 from abc import abstractmethod
+from copy import deepcopy
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple, TypeVar
-from copy import deepcopy
 
 import numpy as np
 import torch
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.algorithms.moo.rnsga2 import RNSGA2
 from pymoo.core.problem import Problem
-from pymoo.factory import get_crossover
-from pymoo.factory import get_mutation
-from pymoo.factory import get_sampling
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.mutation.pm import PM
+from pymoo.operators.repair.rounding import RoundingRepair
+from pymoo.operators.sampling.rnd import IntegerRandomSampling
 from pymoo.optimize import minimize
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -52,6 +53,7 @@ class EvolutionaryAlgorithms(Enum):
     NSGA2 = "NSGA2"
     RNSGA2 = "RNSGA2"
 
+
 class SearchParams:
     """
     Storage class for search parameters.
@@ -72,7 +74,8 @@ class SearchParams:
         aspiration_points: np.ndarray,
         epsilon: float,
         weights: np.ndarray,
-        extreme_points_as_ref_points: bool):
+        extreme_points_as_ref_points: bool,
+    ):
         """
         Initializes storage class for search parameters.
 
@@ -144,8 +147,9 @@ class SearchParams:
             acc_delta,
             ref_acc,
             aspiration_points,
-            epsilon, weights,
-            extreme_points_as_ref_points
+            epsilon,
+            weights,
+            extreme_points_as_ref_points,
         )
 
 
@@ -225,33 +229,50 @@ class SearchAlgorithm(BaseSearchAlgorithm):
         self._top1_accuracy_validation_fn = None
         self._val_loader = None
         self._algorithm_name = search_config["algorithm"]
-        sampling = get_sampling("int_lhs")
+        sampling = IntegerRandomSampling()
         if self._algorithm_name == EvolutionaryAlgorithms.NSGA2.value:
             self._algorithm = NSGA2(
                 pop_size=self.search_params.population,
                 sampling=sampling,
-                crossover=get_crossover(
-                    "int_sbx", prob=self.search_params.crossover_prob, eta=self.search_params.crossover_eta
+                crossover=SBX(
+                    prob=self.search_params.crossover_prob,
+                    eta=self.search_params.crossover_eta,
+                    vtype=float,
+                    repair=RoundingRepair(),
                 ),
-                mutation=get_mutation(
-                    "int_pm", prob=self.search_params.mutation_prob, eta=self.search_params.mutation_eta
+                mutation=PM(
+                    prob=self.search_params.mutation_prob,
+                    eta=self.search_params.mutation_eta,
+                    vtype=float,
+                    repair=RoundingRepair(),
                 ),
                 eliminate_duplicates=True,
-                save_history=True,
+                save_history=False,
             )
         elif self._algorithm_name == EvolutionaryAlgorithms.RNSGA2.value:
-            self._algorithm = RNSGA2(ref_points=self.search_params.aspiration_points,
-                                     pop_size=self.search_params.population,
-                                     epsilon=self.search_params.epsilon,
-                                     normalization='front',
-                                     extreme_points_as_reference_points=self.search_params.extreme_points_as_ref_points,
-                                     sampling=sampling,
-                                     crossover=get_crossover("int_sbx", prob=self.search_params.crossover_prob,
-                                                             eta=self.search_params.crossover_eta),
-                                     mutation=get_mutation("int_pm", prob=self.search_params.mutation_prob,
-                                                           eta=self.search_params.mutation_eta),
-                                     weights=self.search_params.weights,
-                                     eliminate_duplicates=True)
+            self._algorithm = RNSGA2(
+                ref_points=self.search_params.aspiration_points,
+                pop_size=self.search_params.population,
+                epsilon=self.search_params.epsilon,
+                normalization="front",
+                extreme_points_as_reference_points=self.search_params.extreme_points_as_ref_points,
+                sampling=sampling,
+                crossover=SBX(
+                    prob=self.search_params.crossover_prob,
+                    eta=self.search_params.crossover_eta,
+                    vtype=float,
+                    repair=RoundingRepair(),
+                ),
+                mutation=PM(
+                    prob=self.search_params.mutation_prob,
+                    eta=self.search_params.mutation_eta,
+                    vtype=float,
+                    repair=RoundingRepair(),
+                ),
+                weights=self.search_params.weights,
+                eliminate_duplicates=True,
+                save_history=False,
+            )
         else:
             raise NotImplementedError(f"Search Algorithm {self._algorithm_name} not implemented")
         self._num_vars = 0
@@ -399,6 +420,7 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             ("n_gen", int(self.search_params.num_evals / self.search_params.population)),
             seed=self.search_params.seed,
             # save_history=True,
+            copy_algorithm=False,
             verbose=self._verbose,
         )
 
@@ -466,10 +488,17 @@ class SearchAlgorithm(BaseSearchAlgorithm):
             )
         if self._algorithm_name == EvolutionaryAlgorithms.RNSGA2.value:
             for point in self._algorithm.survival.ref_points:
-                plt.scatter(point[0], point[1], marker='^', color='gray', label='Reference Points',
-                            edgecolors='black', linewidth=2.5)
+                plt.scatter(
+                    point[0],
+                    point[1],
+                    marker="^",
+                    color="gray",
+                    label="Reference Points",
+                    edgecolors="black",
+                    linewidth=2.5,
+                )
         plt.legend()
-        plt.title(f'Search Progression ({self._algorithm_name})')
+        plt.title(f"Search Progression ({self._algorithm_name})")
         plt.xlabel(self.efficiency_evaluator_handler.name)
         plt.ylabel(self.accuracy_evaluator_handler.name)
         plt.savefig(f"{self._log_dir}/{filename}.png")
