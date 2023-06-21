@@ -13,6 +13,7 @@ import copy
 
 from nncf.config.definitions import BOOTSTRAP_NAS_ALGO_NAME_IN_CONFIG
 from nncf.config.definitions import EXPERIMENTAL_QUANTIZATION_ALGO_NAME_IN_CONFIG
+from nncf.config.definitions import KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG
 from nncf.config.definitions import MOVEMENT_SPARSITY_ALGO_NAME_IN_CONFIG
 from nncf.config.schemata.algo.quantization import QUANTIZATION_SCHEMA
 from nncf.config.schemata.basic import ARRAY_OF_NUMBERS
@@ -20,6 +21,7 @@ from nncf.config.schemata.basic import ARRAY_OF_STRINGS
 from nncf.config.schemata.basic import BOOLEAN
 from nncf.config.schemata.basic import NUMBER
 from nncf.config.schemata.basic import STRING
+from nncf.config.schemata.basic import make_object_or_array_of_objects_schema
 from nncf.config.schemata.basic import make_string_or_array_of_strings_schema
 from nncf.config.schemata.basic import with_attributes
 from nncf.config.schemata.common.compression import BASIC_COMPRESSION_ALGO_SCHEMA
@@ -293,6 +295,9 @@ BOOTSTRAP_NAS_SEARCH_SCHEMA = {
             NUMBER,
             description="Defines the reference accuracy from the pre-trained model used "
             "to generate the super-network.",
+        ),
+        "compression": make_object_or_array_of_objects_schema(
+            {"oneOf": [{"$ref": f"#/$defs/{KNOWLEDGE_DISTILLATION_ALGO_NAME_IN_CONFIG}"}]}
         ),
     },
     "additionalProperties": False,
