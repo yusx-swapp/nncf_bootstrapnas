@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, Iterator, List, Optional, Union
 
 import numpy as np
 import onnx
@@ -43,6 +43,20 @@ class ONNXGraph:
 
     def _update_node_names(self) -> None:
         self._node_name_to_node = {n.name: n for n in self.onnx_model.graph.node}
+
+    def _get_all_tensors(self) -> Iterator[onnx.TensorProto]:
+        """
+        Iterate over all tensors of ONNX model.
+
+        :yield: tensors of ONNX model.
+        """
+        for initializer in self.onnx_model.graph.initializer:
+            yield initializer
+        for node in self.onnx_model.graph.node:
+            for attribute in node.attribute:
+                if attribute.HasField("t"):
+                    yield attribute.t
+                yield from attribute.tensors
 
     def get_all_nodes(self) -> List[onnx.NodeProto]:
         """
@@ -254,30 +268,6 @@ class ONNXGraph:
             return weight_definitions.bias_port_id
         raise RuntimeError(f"The node {node} does not have bias_port_id attribute")
 
-    def _get_weight_tensor_with_reshape(self, node: onnx.NodeProto) -> Tuple[str, np.ndarray]:
-        """
-        Returns node's weight tensor name and its value in the case when reshape node is placed after the weight.
-        The returned weight tensor will be reshaped according to a shape attribute of the reshape node.
-
-        :param node: Reshape node, whose input is weight tensor.
-        :return: The weight tensor name and its value with applied the reshape operation.
-        """
-        tensor_name = node.output[0]
-        shape = self.get_initializers_value(node.input[1])
-        tensor_value = self.get_initializers_value(node.input[0])
-        reshaped_tensor_value = tensor_value.reshape(shape)
-        return tensor_name, reshaped_tensor_value
-
-    def _get_tensor_from_zero_input(self, node: onnx.NodeProto) -> Tuple[str, np.ndarray]:
-        """
-        Returns the weight tensor name and its value, which is located on the 0-index input port of the node.
-
-        :param node: Node, which takes on the 0-index input port id the weight tensor.
-        :return: The weight tensor name and its value.
-        """
-        tensor_name = self.get_initializer(node.input[0]).name
-        return tensor_name, self.get_initializers_value(tensor_name)
-
     def get_node_index(self, node_name: str) -> int:
         """
         Returns the node index in the model.
@@ -290,42 +280,39 @@ class ONNXGraph:
                 return i
         return -1
 
-    def get_initializers_value(self, initializer_name: str) -> np.ndarray:
+    def has_tensor(self, tensor_name: str) -> bool:
         """
-        Returns tensor value of model's Initializer with the name equals to 'initializer_name'.
+        Returns True whether the model has the tensor with the name equals to tensor_name.
 
-        :param initializer_name: Name of the tensor.
-        :return: The value of the tensor.
+        :param tensor_name: Name of the tensor.
+        :return: True if the model has such tensor, False - otherwise.
         """
-        for init in self.onnx_model.graph.initializer:
-            if init.name == initializer_name:
-                tensor = numpy_helper.to_array(init)
-                return tensor
-        raise RuntimeError("There is no initializer with the name {}".format(initializer_name))
-
-    def has_initializer(self, initializer_name: str) -> bool:
-        """
-        Returns True whether the model has the initializer with the name equals to initializer_name.
-
-        :param initializer_name: Name of the initializer.
-        :return: True if the model has such initializer, False - otherwise.
-        """
-        for init in self.onnx_model.graph.initializer:
-            if init.name == initializer_name:
+        for tensor in self._get_all_tensors():
+            if tensor.name == tensor_name:
                 return True
         return False
 
-    def get_initializer(self, initializer_name: str) -> onnx.TensorProto:
+    def get_tensor_value(self, tensor_name: str) -> np.ndarray:
         """
-        Returns model's Initializer with the name equals to 'initializer_name'.
+        Returns tensor value of a tensor with the name 'tensor_name'.
+
+        :param tensor_name: Name of the tensor.
+        :return: The value of the tensor.
+        """
+        tensor = self.get_tensor(tensor_name)
+        return numpy_helper.to_array(tensor)
+
+    def get_tensor(self, tensor_name: str) -> onnx.TensorProto:
+        """
+        Returns a tensor with the name 'tensor_name'.
 
         :param initializer_name: Name of the Initializer.
         :return: The Initializer.
         """
-        for init in self.onnx_model.graph.initializer:
-            if init.name == initializer_name:
-                return init
-        raise RuntimeError("There is no initializer with the name {}".format(initializer_name))
+        for tensor in self._get_all_tensors():
+            if tensor.name == tensor_name:
+                return tensor
+        raise RuntimeError("There is no tensor with the name {}".format(tensor_name))
 
     @staticmethod
     def get_edge_shape(edge: Union[onnx.ValueInfoProto, onnx.TensorProto]) -> List[int]:

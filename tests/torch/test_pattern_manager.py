@@ -8,7 +8,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from nncf.common.graph.patterns import HWFusedPatternNames
+from nncf.common.graph.patterns import IgnoredPatternNames
 from nncf.common.utils.backend import BackendType
 from tests.shared.patterns import check_hw_patterns
 from tests.shared.patterns import check_ignored_patterns
@@ -17,17 +19,12 @@ IGNORING_HW_PATTERN_REASONS = {
     HWFusedPatternNames.ADD_SCALE_SHIFT_OUTPUT: "Not relevant for Torch.",
     HWFusedPatternNames.BATCH_INDEX: "Not relevant for Torch.",
     HWFusedPatternNames.EQUAL_LOGICALNOT: "Not relevant for Torch.",
-    HWFusedPatternNames.FC_BN_HSWISH_ACTIVATION: "Not relevant for Torch.",
     HWFusedPatternNames.LINEAR_WITH_BIAS: "Not relevant for Torch.",
     HWFusedPatternNames.MVN_SCALE_SHIFT: "Not relevant for Torch.",
     HWFusedPatternNames.NORMALIZE_L2_MULTIPLY: "Not relevant for Torch.",
     HWFusedPatternNames.SCALE_SHIFT: "Not relevant for Torch.",
     HWFusedPatternNames.SE_BLOCK: "Not relevant for Torch.",
     HWFusedPatternNames.SOFTMAX_DIV: "Not relevant for Torch.",
-    HWFusedPatternNames.SOFTMAX_RESHAPE_MATMUL: "Not relevant for Torch.",
-    HWFusedPatternNames.SOFTMAX_RESHAPE_TRANSPOSE_GATHER_MATMUL: "Not relevant for Torch.",
-    HWFusedPatternNames.SOFTMAX_RESHAPE_TRANSPOSE_MATMUL: "Not relevant for Torch.",
-    HWFusedPatternNames.STABLE_DIFFUSION: "Not relevant for Torch.",
     HWFusedPatternNames.HSWISH_ACTIVATION: "Not relevant for Torch.",
     HWFusedPatternNames.HSWISH_ACTIVATION_V2: "Not relevant for Torch.",
     HWFusedPatternNames.HSWISH_ACTIVATION_WITHOUT_DENOMINATOR: "Not relevant for Torch.",
@@ -70,7 +67,9 @@ IGNORING_HW_PATTERN_REASONS = {
     HWFusedPatternNames.LINEAR_ACTIVATIONS_UNSQUEEZE_BN_SQUEEZE: "Not relevant for Torch.",
 }
 
-IGNORING_IGNORED_PATTERN_REASONS = {}
+IGNORING_IGNORED_PATTERN_REASONS = {
+    IgnoredPatternNames.FC_BN_HSWISH_ACTIVATION: "Not relevant for Torch.",
+}
 
 
 def test_pattern_manager():
