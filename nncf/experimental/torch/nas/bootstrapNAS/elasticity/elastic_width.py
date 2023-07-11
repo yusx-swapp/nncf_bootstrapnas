@@ -22,6 +22,7 @@ from torch import nn
 from nncf.common.graph import BaseLayerAttributes
 from nncf.common.graph import NNCFNodeName
 from nncf.common.graph.layer_attributes import ConvolutionLayerAttributes
+from nncf.common.graph.layer_attributes import EmbeddingLayerAttributes
 from nncf.common.graph.layer_attributes import GenericWeightedLayerAttributes
 from nncf.common.graph.layer_attributes import LinearLayerAttributes
 from nncf.common.graph.transformations.commands import TargetType
@@ -50,11 +51,13 @@ from nncf.torch.graph.graph import PTNNCFGraph
 from nncf.torch.graph.operator_metatypes import PTDepthwiseConv2dSubtype
 from nncf.torch.graph.operator_metatypes import PTModuleBatchNormMetatype
 from nncf.torch.graph.operator_metatypes import PTModuleConv2dMetatype
+from nncf.torch.graph.operator_metatypes import PTModuleEmbeddingMetatype
 from nncf.torch.graph.operator_metatypes import PTModuleLayerNormMetatype
 from nncf.torch.graph.operator_metatypes import PTModuleLinearMetatype
 from nncf.torch.graph.transformations.commands import PTInsertionCommand
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 from nncf.torch.layers import NNCFConv2d
+from nncf.torch.layers import NNCFEmbedding
 from nncf.torch.layers import NNCFLinear
 from nncf.torch.module_operations import UpdateBatchNormParams
 from nncf.torch.module_operations import UpdateLayerNormParams
@@ -385,6 +388,11 @@ class ElasticInputWidthLinearOp(ElasticWidthOp, nn.Module):
         """
         return weight[:, : self._active_width]
 
+    def get_clean_subnet_weight(self, node_module) -> None:
+        new_weight = self(node_module.weight)
+        node_module.weight = nn.Parameter(new_weight)
+        node_module.in_features = self._active_width
+
 
 class ElasticInputWidthConvOp(ElasticWidthOp, nn.Module):
     """
@@ -447,6 +455,14 @@ class ElasticInputWidthLayerNormOp(ElasticWidthOp, nn.Module):
         assert len(normalized_shape) == 1, "Currently only 1-dimensional shape is supported."
         return [weight[: self._active_width], bias[: self._active_width], (self._active_width,)]
 
+    def get_clean_subnet_weight(self, node_module) -> None:
+        new_weight, new_bias, new_normalized_shape = self.forward(
+            node_module.weight, node_module.bias, node_module.normalized_shape
+        )
+        node_module.weight = nn.Parameter(new_weight)
+        node_module.bias = nn.Parameter(new_bias)
+        node_module.normalized_shape = new_normalized_shape
+
 
 class ElasticOutputWidthConv2DOp(ElasticOutputWidthOp, nn.Module):
     """
@@ -483,6 +499,31 @@ class ElasticOutputWidthLinearOp(ElasticOutputWidthOp, nn.Module):
         """
         new_bias = None if bias is None else bias[: self._active_width]
         return [weight[: self._active_width, :], new_bias]
+
+    def get_clean_subnet_weight(self, node_module) -> None:
+        new_weight, new_bias = self(node_module.weight, node_module.bias)
+        node_module.weight = nn.Parameter(new_weight)
+        node_module.bias = nn.Parameter(new_bias)
+        node_module.out_features = self._active_width
+
+
+class ElasticOutputWidthEmbeddingOp(ElasticOutputWidthOp, nn.Module):
+    """
+    Introduces elastic output width for embedding layer.
+    """
+
+    def forward(self, weight: torch.Tensor) -> torch.Tensor:
+        """
+        Trims embedding layer's parameters according to active number of output channels.
+        :param weight: weight tensor to be trimmed
+        :return: trimmed embedding parameters
+        """
+        return weight[:, : self._active_width]
+
+    def get_clean_subnet_weight(self, node_module) -> None:
+        new_weight = self(node_module.weight)
+        node_module.weight = nn.Parameter(new_weight)
+        node_module.embedding_dim = self._active_width
 
 
 class EWHandlerStateNames:
@@ -795,6 +836,92 @@ class ElasticWidthHandler(SingleElasticityHandler):
         )
         reorder_algo.reorder_filters()
 
+    def add_weight_importance_model(self, weight_importance_model: NNCFNetwork) -> None:
+        weight_importance_model.eval()
+        self.weight_importance_model = deepcopy(weight_importance_model).to(self._target_model.device)
+        nncf_logger.info("add weight importance model")
+
+    def get_reorder_indexes_per_module(self, ele, weight_importance_module, group_filters_num, device):
+        def get_importance_per_module(module):
+            for key in list(module.pre_ops.keys()):
+                op = module.get_pre_op(key).op
+                importance = torch.sum(op.get_importance(False, expanded=True).to(device), dim=1)
+            return importance
+
+        if "query" in ele.node_name or "key" in ele.node_name or "value" in ele.node_name:
+            replace_name = ele.node_name.split("/")[-2][len("NNCFLinear[") : -1]
+            for correlated_name in ["query", "key", "value"]:
+                node = self._propagation_graph.get_node_by_name(ele.node_name.replace(replace_name, correlated_name))
+                if "output_mask" in node.data:
+                    reorder_indexes = node.data["output_mask"].tensor
+                    return reorder_indexes
+
+            # brute - force way to compute this <-- can use automatic block search in the future
+            for correlated_name in ["query", "key", "value"]:
+                module = self.weight_importance_model.nncf.get_containing_module(
+                    ele.node_name.replace(replace_name, correlated_name)
+                )
+                if correlated_name == "query":
+                    importance = get_importance_per_module(module)
+                else:
+                    importance += get_importance_per_module(module)
+                # importance per head
+                head_size = 64
+                importance_per_head = torch.sum(importance.view(-1, head_size), dim=-1)
+                _, reorder_indexes_per_head = torch.sort(importance_per_head, dim=0, descending=True)
+                reorder_indexes = (
+                    torch.range(0, head_size - 1)
+                    .int()
+                    .repeat(len(importance_per_head))
+                    .to(reorder_indexes_per_head.device)
+                    + torch.repeat_interleave(reorder_indexes_per_head, head_size) * head_size
+                )
+                nncf_logger.info("Use importance per block to reorder QKV weights")
+        else:
+            importance = get_importance_per_module(weight_importance_module)
+            _, reorder_indexes = torch.sort(importance, dim=0, descending=True)
+
+        return reorder_indexes
+
+    def reorganize_weights_with_importance_mask(self) -> None:
+        """
+        Reorder output filters in descending order of their importance.
+        """
+
+        weight_importance_model = getattr(self, "weight_importance_model", None)
+        assert weight_importance_model is not None, "Please add weight_importance_model before using this function"
+        for node in self._propagation_graph.get_all_nodes():
+            node.data.pop("output_mask", None)
+
+        for group in self._pruned_module_groups_info.get_all_clusters():
+            filters_num = torch.tensor([get_filters_num(minfo.module) for minfo in group.elements])
+            if not torch.all(filters_num == filters_num[0]):
+                # the group including embedding layer
+                print(f"not support reorganization: {[ele.node_name for ele in group.elements]}")
+                continue
+            device = group.elements[0].module.weight.device
+
+            for (
+                ele
+            ) in (
+                group.elements
+            ):  # weight importance mask has already considered the correlation between layers --> can do this element by element
+                weight_importance_module = self.weight_importance_model.nncf.get_containing_module(ele.node_name)
+                reorder_indexes = self.get_reorder_indexes_per_module(
+                    ele, weight_importance_module, filters_num[0], device
+                )
+
+                if reorder_indexes is not None:
+                    node = self._propagation_graph.get_node_by_id(ele.nncf_node_id)
+                    node.data["output_mask"] = PTNNCFTensor(reorder_indexes)
+                    print(f"add reorder indexes for node: {ele.node_name}")
+
+        # 2. Propagating masks across the graph
+        reorder_algo = FilterReorderingAlgorithm(
+            self._target_model, self._propagation_graph, PT_PRUNING_OPERATOR_METATYPES, PTNNCFPruningTensorProcessor
+        )
+        reorder_algo.reorder_filters(self._add_dynamic_inputs)
+
     def find_pairs_of_nodes_with_different_width(self, pairs_of_nodes: List[Tuple[str, str]]) -> List[int]:
         """
         Find pairs of nodes that have different output shapes. It's need to resolve conflict between elastic width and
@@ -947,7 +1074,7 @@ class ElasticWidthBuilder(SingleElasticityBuilder):
         device = next(target_model.parameters()).device
 
         if not self._grouped_node_names_to_prune:
-            prunable_types = [NNCFConv2d, NNCFLinear]
+            prunable_types = [NNCFConv2d, NNCFLinear, NNCFEmbedding]
             prune_operations_types = [pt.op_func_name for pt in prunable_types]
             types_of_grouping_ops = PTElementwisePruningOp.get_all_op_aliases()
             pruning_node_selector = PruningNodeSelector(
@@ -972,6 +1099,14 @@ class ElasticWidthBuilder(SingleElasticityBuilder):
             PTModuleConv2dMetatype: self._create_elastic_conv_width_op,
             PTDepthwiseConv2dSubtype: self._create_elastic_conv_width_op,
             PTModuleLinearMetatype: self._create_elastic_linear_width_op,
+            PTModuleEmbeddingMetatype: self._create_elastic_embedding_width_op,
+        }
+
+        metatype_vs_update_params_op = {
+            PTModuleConv2dMetatype: UpdateWeightAndOptionalBias,
+            PTDepthwiseConv2dSubtype: UpdateWeightAndOptionalBias,
+            PTModuleLinearMetatype: UpdateWeightAndOptionalBias,
+            PTModuleEmbeddingMetatype: UpdateWeight,
         }
 
         for i, grouped_node_names in enumerate(self._grouped_node_names_to_prune):
@@ -993,7 +1128,8 @@ class ElasticWidthBuilder(SingleElasticityBuilder):
                     self._overwrite_groups_widths[i] if self._overwriting_pruning_groups else [],
                 )
                 elastic_width_operation.to(device)
-                update_conv_params_op = UpdateWeightAndOptionalBias(elastic_width_operation)
+                update_params_op = metatype_vs_update_params_op[metatype]
+                update_conv_params_op = update_params_op(elastic_width_operation)
                 transformation_commands.append(
                     PTInsertionCommand(
                         PTTargetPoint(TargetType.PRE_LAYER_OPERATION, target_node_name=node_name),
@@ -1003,7 +1139,7 @@ class ElasticWidthBuilder(SingleElasticityBuilder):
                 )
                 pruned_module = target_model.nncf.get_containing_module(node_name)
                 assert isinstance(
-                    pruned_module, (nn.Conv2d, nn.Linear)
+                    pruned_module, (nn.Conv2d, nn.Linear, nn.Embedding)
                 ), "currently prune only 2D Convolutions and Linear layers"
 
                 group_minfos.append(
@@ -1116,6 +1252,21 @@ class ElasticWidthBuilder(SingleElasticityBuilder):
         nncf_logger.debug(f"Adding Dynamic Linear Layer in scope: {str(node_name)}")
         return ElasticOutputWidthLinearOp(
             linear_layer_attrs.out_features, node_name, params, fixed_width_list=fixed_width_list
+        )
+
+    @staticmethod
+    def _create_elastic_embedding_width_op(
+        embedding_layer_attrs: BaseLayerAttributes,
+        node_name: str,
+        params: ElasticWidthParams,
+        fixed_width_list: Optional[List[int]] = None,
+    ) -> ElasticOutputWidthEmbeddingOp:
+        assert isinstance(embedding_layer_attrs, EmbeddingLayerAttributes)
+        if fixed_width_list is None:
+            fixed_width_list = []
+        nncf_logger.info("Adding Dynamic Embedding Layer in scope: {}".format(str(node_name)))
+        return ElasticOutputWidthEmbeddingOp(
+            embedding_layer_attrs.embedding_dim, node_name, params, fixed_width_list=fixed_width_list
         )
 
     @staticmethod

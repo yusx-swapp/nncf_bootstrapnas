@@ -180,6 +180,19 @@ class BootstrapNASScheduler(BaseCompressionScheduler):
                 self._lr_scheduler.stage_step(stage_desc)
                 self._training_ctrl.set_stage(stage_desc)
                 self.current_stage_idx = stage_desc_idx
+        if self.current_epoch % stage_desc.reorg_interval == 0:
+            if stage_desc_idx > 0:
+                raise NotImplementedError
+            width_handler = self._training_ctrl.multi_elasticity_handler.width_handler
+            if width_handler is not None:
+                assert getattr(width_handler, "create_importance_mask_fn", None)
+                width_handler.add_weight_importance_model(
+                    width_handler.create_importance_mask_fn(
+                        width_handler._target_model.state_dict(),
+                        save_folder=f"movement_sparsity_{self.current_epoch}",
+                    )
+                )
+                width_handler.reorganize_weights_with_importance_mask()
 
     def is_final_stage(self) -> bool:
         """

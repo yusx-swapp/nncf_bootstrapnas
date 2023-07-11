@@ -26,6 +26,7 @@ class SDescriptorParamNames:
     INIT_LR = "init_lr"
     EPOCHS_LR = "epochs_lr"
     SAMPLE_RATE = "sample_rate"
+    REORG_INTERVAL = "reorg_interval"
 
 
 class StageDescriptor:
@@ -46,6 +47,7 @@ class StageDescriptor:
         init_lr: float = None,
         epochs_lr: int = None,
         sample_rate: int = 1,
+        reorg_interval: int = None,
     ):
         self.train_dims = train_dims
         self.epochs = epochs
@@ -56,10 +58,17 @@ class StageDescriptor:
         self.init_lr = init_lr
         self.epochs_lr = epochs_lr
         self.sample_rate = sample_rate
+        self.reorg_interval = (epochs + 1) if reorg_interval is None else reorg_interval
         if sample_rate <= 0:
             nncf_logger.warning(f"Only positive integers are allowed for sample rate, but sample_rate={sample_rate}.")
             nncf_logger.warning("Setting sample rate to default 1")
             self.sample_rate = 1
+        if self.reorg_interval <= 0:
+            nncf_logger.warning(
+                f"Only positive integers are allowed for reorg interval, but reorg_interval={reorg_interval}."
+            )
+            nncf_logger.warning("Setting sample rate to default (epoch + 1)")
+            self.reorg_interval = epochs + 1
 
     def __eq__(self, other: "StageDescriptor"):
         return self.__dict__ == other.__dict__
@@ -80,6 +89,7 @@ class StageDescriptor:
             cls._state_names.INIT_LR: config.get(cls._state_names.INIT_LR, None),
             cls._state_names.EPOCHS_LR: config.get(cls._state_names.EPOCHS_LR, None),
             cls._state_names.SAMPLE_RATE: config.get(cls._state_names.SAMPLE_RATE, 1),
+            cls._state_names.REORG_INTERVAL: config.get(cls._state_names.REORG_INTERVAL, None),
         }
         return cls(**kwargs)
 
@@ -104,6 +114,7 @@ class StageDescriptor:
             self._state_names.DEPTH_INDICATOR: self.depth_indicator,
             self._state_names.BN_ADAPT: self.bn_adapt,
             self._state_names.SAMPLE_RATE: self.sample_rate,
+            self._state_names.REORG_INTERVAL: self.reorg_interval,
         }
         if self.init_lr is not None:
             state_dict["init_lr"] = self.init_lr

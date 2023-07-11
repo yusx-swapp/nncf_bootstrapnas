@@ -20,6 +20,7 @@ from nncf.common.graph import NNCFGraph
 from nncf.common.graph import NNCFNode
 from nncf.common.graph import NNCFNodeName
 from nncf.common.graph.layer_attributes import ConvolutionLayerAttributes
+from nncf.common.graph.layer_attributes import EmbeddingLayerAttributes
 from nncf.common.graph.layer_attributes import LinearLayerAttributes
 from nncf.common.tensor import NNCFTensor
 from nncf.common.utils.registry import Registry
@@ -199,7 +200,9 @@ def get_prunable_layers_in_out_channels(graph: NNCFGraph) -> Tuple[Dict[NNCFNode
     """
     in_channels, out_channels = {}, {}
     for node in graph.get_all_nodes():
-        if isinstance(node.layer_attributes, (ConvolutionLayerAttributes, LinearLayerAttributes)):
+        if isinstance(
+            node.layer_attributes, (ConvolutionLayerAttributes, LinearLayerAttributes, EmbeddingLayerAttributes)
+        ):
             name = node.node_name
             if name in in_channels and name in out_channels:
                 continue
@@ -385,6 +388,8 @@ def get_input_channels(node: NNCFNode) -> int:
         return layer_attrs.in_channels
     if isinstance(layer_attrs, LinearLayerAttributes):
         return layer_attrs.in_features
+    if isinstance(layer_attrs, EmbeddingLayerAttributes):
+        return layer_attrs.num_embeddings
     raise RuntimeError(f"Can't get count of input channels from node {node}")
 
 
@@ -400,6 +405,8 @@ def get_output_channels(node: NNCFNode) -> int:
         return layer_attrs.out_channels
     if isinstance(layer_attrs, LinearLayerAttributes):
         return layer_attrs.out_features
+    if isinstance(layer_attrs, EmbeddingLayerAttributes):
+        return layer_attrs.embedding_dim
     raise RuntimeError(f"Can't get count of output channels from node {node}")
 
 

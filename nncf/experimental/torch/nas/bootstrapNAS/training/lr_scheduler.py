@@ -133,6 +133,19 @@ class BaseLRScheduler(BaseCompressionScheduler):
     def get_last_lr(self) -> List[Any]:
         return [group["lr"] for group in self._optimizer.param_groups]
 
+    def state_dict(self) -> Dict[str, Any]:
+        """
+        Returns the state of the scheduler as a :class:`dict`.
+        """
+        return {key: value for key, value in self.__dict__.items() if key != "_optimizer"}
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """
+        Loads the schedulers state.
+        :param state_dict (dict): scheduler state.
+        """
+        self.__dict__.update(state_dict)
+
 
 class GlobalLRScheduler(BaseLRScheduler):
     """

@@ -23,6 +23,7 @@ from nncf.common.pruning.operations import BatchNormPruningOp
 from nncf.common.pruning.operations import ConcatPruningOp
 from nncf.common.pruning.operations import ConvolutionPruningOp
 from nncf.common.pruning.operations import ElementwisePruningOp
+from nncf.common.pruning.operations import EmbeddingPruningOp
 from nncf.common.pruning.operations import GroupNormPruningOp
 from nncf.common.pruning.operations import IdentityMaskForwardPruningOp
 from nncf.common.pruning.operations import InputPruningOp
@@ -51,6 +52,7 @@ from nncf.torch.graph.operator_metatypes import PTConvTranspose3dMetatype
 from nncf.torch.graph.operator_metatypes import PTDivMetatype
 from nncf.torch.graph.operator_metatypes import PTDropoutMetatype
 from nncf.torch.graph.operator_metatypes import PTELUMetatype
+from nncf.torch.graph.operator_metatypes import PTEmbeddingMetatype
 from nncf.torch.graph.operator_metatypes import PTGELUMetatype
 from nncf.torch.graph.operator_metatypes import PTGroupNormMetatype
 from nncf.torch.graph.operator_metatypes import PTHardSigmoidMetatype
@@ -180,6 +182,25 @@ class PTIdentityMaskForwardPruningOp(IdentityMaskForwardPruningOp, PTPruner):
         PTInterpolateMetatype,
     ]
     additional_types = ["h_sigmoid", "h_swish", "RELU"]
+
+
+@PT_PRUNING_OPERATOR_METATYPES.register("embedding")
+class PTEmbeddingPruningOp(EmbeddingPruningOp, PTPruner):
+    subtypes = [PTEmbeddingMetatype]
+
+    @classmethod
+    def output_reorder(cls, model: NNCFNetwork, node: NNCFNode, graph: NNCFGraph):
+        reorder_indexes = node.data["output_mask"]
+        if reorder_indexes is None:
+            return
+        embedding = model.get_containing_module(node.node_name)
+        reorder_indexes = reorder_indexes.tensor
+        embedding.weight.data = torch.index_select(embedding.weight.data, 1, reorder_indexes)
+        nncf_logger.debug(
+            "Reordered output channels (first 10 reorder indexes {}) of Embedding: {} ".format(
+                reorder_indexes[:10], node.data["key"]
+            )
+        )
 
 
 @PT_PRUNING_OPERATOR_METATYPES.register("convolution")

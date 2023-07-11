@@ -202,7 +202,10 @@ class ShapePruningProcessor:
             next_nodes_cluster = next_nodes_cluster - cluster_nodes
             next_nodes[cluster.id] = []
             for next_node in next_nodes_cluster:
-                sparse_multiplier = self._get_next_node_sparse_multiplier(graph, next_node, cluster)
+                try:
+                    sparse_multiplier = self._get_next_node_sparse_multiplier(graph, next_node, cluster)
+                except:
+                    sparse_multiplier = 1
                 next_nodes[cluster.id].append(
                     {"node_name": next_node.node_name, "sparse_multiplier": sparse_multiplier}
                 )

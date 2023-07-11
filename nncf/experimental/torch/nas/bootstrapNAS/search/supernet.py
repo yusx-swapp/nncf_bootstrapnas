@@ -9,12 +9,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
+from functools import reduce
 from typing import Any, Callable, Dict, List, Tuple, TypeVar
 
 import torch
+import torch.nn as nn
 
 from nncf import NNCFConfig
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_controller import ElasticityController
+from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_dim import ElasticityDim
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.multi_elasticity_handler import SubnetConfig
 from nncf.experimental.torch.nas.bootstrapNAS.training.model_creator_helpers import resume_compression_from_state
 from nncf.torch.checkpoint_loading import load_state
@@ -31,7 +35,7 @@ class TrainedSuperNet:
     third party solutions for subnetwork search on existing super-networks.
     """
 
-    def __init__(self, elastic_ctrl: ElasticityController, nncf_network: NNCFNetwork):
+    def __init__(self, elastic_ctrl: ElasticityController, nncf_network: NNCFNetwork, original_torch_model: nn.Module):
         """
         Initializes the super-network interface.
 
@@ -41,6 +45,7 @@ class TrainedSuperNet:
         self._m_handler = elastic_ctrl.multi_elasticity_handler
         self._elasticity_ctrl = elastic_ctrl
         self._model = nncf_network
+        self._original_torch_model = original_torch_model
 
     @classmethod
     def from_checkpoint(
@@ -59,13 +64,14 @@ class TrainedSuperNet:
         :param supernet_weights_path: trained weights to resume the super-network.
         :return: SuperNetwork with wrapped functionality.
         """
+        original_torch_model = deepcopy(model)
         nncf_network = create_nncf_network(model, nncf_config)
         compression_state = torch.load(supernet_elasticity_path, map_location=torch.device(nncf_config.device))
         model, elasticity_ctrl = resume_compression_from_state(nncf_network, compression_state)
         model_weights = torch.load(supernet_weights_path, map_location=torch.device(nncf_config.device))
         load_state(model, model_weights, is_resume=True)
         elasticity_ctrl.multi_elasticity_handler.activate_maximum_subnet()
-        return TrainedSuperNet(elasticity_ctrl, model)
+        return TrainedSuperNet(elasticity_ctrl, model, original_torch_model)
 
     def get_search_space(self) -> Dict:
         """
@@ -156,3 +162,99 @@ class TrainedSuperNet:
         :return: the nncf network with the current active configuration.
         """
         return self._model
+
+    @torch.no_grad()
+    def get_clean_subnet(self) -> nn.Module:
+        """
+        Remove pre-ops and post-ops by directly pruning weights shape. Returns a subnet without NNCF wrappers.
+        """
+
+        def get_module_by_name(model_, access_string):
+            names = access_string.split(sep=".")
+            return reduce(getattr, names, model_)
+
+        config = self.get_active_config()
+        subnet_model = deepcopy(self._model)
+        torch_model = deepcopy(self._original_torch_model)
+
+        # elastic width - update weight width
+        if ElasticityDim.WIDTH in config:
+            for cluster_id, _ in config[ElasticityDim.WIDTH].items():
+                cluster = self._m_handler.width_handler._pruned_module_groups_info.get_cluster_by_id(cluster_id)
+                for elastic_width_info in cluster.elements:
+                    node_module = self._model.nncf.get_containing_module(elastic_width_info.node_name)
+                    subnet_module = subnet_model.nncf.get_containing_module(elastic_width_info.node_name)
+                    for op_id in node_module.pre_ops.keys():
+                        node_module.pre_ops[op_id].op.get_clean_subnet_weight(subnet_module)
+
+            for (
+                node_name,
+                dynamic_input_width_op,
+            ) in self._m_handler.width_handler._node_name_vs_dynamic_input_width_op_map.items():
+                subnet_module = subnet_model.nncf.get_containing_module(node_name)
+                dynamic_input_width_op.get_clean_subnet_weight(subnet_module)
+
+            # update weights in torch model (now only supports transformers)
+            for pt_name, pt_module in torch_model.named_modules():
+                if isinstance(pt_module, nn.Linear):
+                    nncf_module = get_module_by_name(subnet_model, pt_name)
+                    pt_module.in_features = nncf_module.in_features
+                    pt_module.out_features = nncf_module.out_features
+                    pt_module.weight = deepcopy(nncf_module.weight)
+                    pt_module.bias = deepcopy(nncf_module.bias)
+                if isinstance(pt_module, nn.Embedding):
+                    nncf_module = get_module_by_name(subnet_model, pt_name)
+                    pt_module.weight = deepcopy(nncf_module.weight)
+                    pt_module.embedding_dim = nncf_module.embedding_dim
+                if isinstance(pt_module, nn.LayerNorm):
+                    nncf_module = get_module_by_name(subnet_model, pt_name)
+                    pt_module.weight = deepcopy(nncf_module.weight)
+                    pt_module.bias = deepcopy(nncf_module.bias)
+                    pt_module.normalized_shape = nncf_module.normalized_shape
+
+        # elastic depth - replace with identity
+        if ElasticityDim.DEPTH in config or ElasticityDim.KERNEL in config:
+            raise NotImplementedError
+
+        return torch_model
+
+
+if __name__ == "__main__":
+    # test bert
+    from pathlib import Path
+
+    import jstyleson as json
+    from transformers import AutoModelForQuestionAnswering
+
+    from nncf.common.utils.os import safe_open
+
+    model_name = "bert-large-uncased-whole-word-masking"
+    supernet_weights_path = "/home/jpmunoz/bnas_supernets/transformers/bert_squad_nas/best_result/supernet_weights.pth"
+    supernet_elasticity_path = (
+        "/home/jpmunoz/bnas_supernets/transformers/bert_squad_nas/best_result/elasticity_state.pth"
+    )
+    nncf_config_path = "/home/jpmunoz/bnas_supernets/transformers/bert_squad_nas/best_result/nncf_config.json"
+
+    # prepare model and nncf_config
+    model = AutoModelForQuestionAnswering.from_pretrained(model_name)
+    original_model = deepcopy(model)
+    nncf_config_path = Path(nncf_config_path).resolve()
+    with safe_open(nncf_config_path) as f:
+        loaded_json = json.load(f)
+    nncf_config = NNCFConfig.from_dict(loaded_json)
+    nncf_config.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # TrainedSuperNet interface
+    train_supernet = TrainedSuperNet.from_checkpoint(
+        model, nncf_config, supernet_elasticity_path, supernet_weights_path
+    )
+    train_supernet.activate_minimal_subnet()
+    print(f"current config: {train_supernet.get_active_config()}")
+
+    # type 1: get a clean torch network
+    clean_subnet = train_supernet.get_clean_subnet()
+
+    # type 2: export to onnx
+    print("exporting model to onnx...")
+    train_supernet.export_active_subnet_to_onnx()
+    print("done")

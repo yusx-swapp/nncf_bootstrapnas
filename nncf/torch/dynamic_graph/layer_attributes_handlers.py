@@ -15,12 +15,14 @@ from torch.nn import Conv3d
 from torch.nn import ConvTranspose1d
 from torch.nn import ConvTranspose2d
 from torch.nn import ConvTranspose3d
+from torch.nn import Embedding
 from torch.nn import Linear
 from torch.nn import Module as TorchModule
 
 from nncf.common.graph.graph import NNCFGraph
 from nncf.common.graph.layer_attributes import BaseLayerAttributes
 from nncf.common.graph.layer_attributes import ConvolutionLayerAttributes
+from nncf.common.graph.layer_attributes import EmbeddingLayerAttributes
 from nncf.common.graph.layer_attributes import GenericWeightedLayerAttributes
 from nncf.common.graph.layer_attributes import GetItemLayerAttributes
 from nncf.common.graph.layer_attributes import GroupNormLayerAttributes
@@ -95,6 +97,12 @@ def get_layer_attributes_from_module(module: TorchModule, operator_name: str) ->
             bias=module.bias is not None,
         )
 
+    if isinstance(module, Embedding):
+        return EmbeddingLayerAttributes(
+            weight_requires_grad=module.weight.requires_grad,
+            num_embeddings=module.num_embeddings,
+            embedding_dim=module.embedding_dim,
+        )
     if hasattr(module, "weight"):
         return GenericWeightedLayerAttributes(
             weight_requires_grad=getattr(module, weight_attr).requires_grad, weight_shape=module.weight.shape
