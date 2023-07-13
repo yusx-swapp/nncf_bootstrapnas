@@ -9,12 +9,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import csv
 from copy import deepcopy
 from functools import reduce
 from typing import Any, Callable, Dict, List, Tuple, TypeVar
 
+import numpy as np
 import torch
 import torch.nn as nn
+from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 
 from nncf import NNCFConfig
 from nncf.experimental.torch.nas.bootstrapNAS.elasticity.elasticity_controller import ElasticityController
@@ -218,6 +221,70 @@ class TrainedSuperNet:
 
         return torch_model
 
+    @classmethod
+    def generate_pareto_front_subnets_from_csv(cls, csv_file: str, save_file: str):
+        """
+        Generate pareto front subnets based on search_progression.csv.
+        """
+
+        def convert_str_config(str_config):
+            # an ugly verison - assume elastic width in str_config
+            subnet_config = SubnetConfig()
+
+            assert "ElasticityDim.WIDTH" in str_config
+
+            if "ElasticityDim.KERNEL" in str_config:
+                raise NotImplementedError
+            if "ElasticityDim.DEPTH" in str_config:
+                str_width_config, str_depth_config = str_config.split("}), (<ElasticityDim.DEPTH: 'depth'>, ")
+            else:
+                str_width_config = str_config.split("})")[0]
+                str_depth_config = None
+
+            str_width_config = str_width_config.split("OrderedDict([(<ElasticityDim.WIDTH: 'width'>, {")[-1]
+            width_config = {}
+            for block in str_width_config.split(", "):
+                block_id, block_w = block.split(": ")
+                width_config[int(block_id)] = int(block_w)
+            subnet_config[ElasticityDim.WIDTH] = width_config
+
+            if str_depth_config is not None:
+                str_depth_config = str_depth_config.split(")])")[0]
+                depth_config = []
+                if str_depth_config != "[]":
+                    depth_config = [int(block_id) for block_id in str_depth_config[1:-1].split(", ")]
+                subnet_config[ElasticityDim.DEPTH] = depth_config
+
+            return subnet_config
+
+        with open(csv_file) as f:
+            reader = csv.reader(f)
+            subnet_configs = []
+            eva_arr = []
+            for row in reader:
+                subnet_configs.append(convert_str_config(row[0]))
+                eva_arr.append([float(row[-3]), float(row[-1])])  # MACs, f1-score
+
+        F = np.column_stack(list(eva_arr)).transpose()
+        pareto_front = NonDominatedSorting(method="fast_non_dominated_sort").do(F, only_non_dominated_front=True)
+        pareto_front_subnets = [subnet_configs[idx] for idx in pareto_front]
+        pareto_front_eva_arr = [eva_arr[idx] for idx in pareto_front]
+        # sort based on MACs
+        sort_idx = np.argsort(np.column_stack(pareto_front_eva_arr)[0])
+        pareto_front_subnets = [pareto_front_subnets[idx] for idx in sort_idx]
+        pareto_front_eva_arr = [pareto_front_eva_arr[idx] for idx in sort_idx]
+
+        pareto_front_info = []
+        for pareto_front_subnet, eva_arr in zip(pareto_front_subnets, pareto_front_eva_arr):
+            info_dict = {
+                "subnet_config": pareto_front_subnet,
+                "f1_score": -eva_arr[1],  # f1-score
+                "MACs": eva_arr[0],  # MACs
+            }
+            pareto_front_info.append(info_dict)
+        torch.save(pareto_front_info, save_file)
+        print(f"save pareto front info to {save_file}")
+
 
 if __name__ == "__main__":
     # test bert
@@ -233,6 +300,9 @@ if __name__ == "__main__":
     supernet_elasticity_path = (
         "/home/jpmunoz/bnas_supernets/transformers/bert_squad_nas/best_result/elasticity_state.pth"
     )
+    pareto_front_subnets_path = (
+        "/home/jpmunoz/bnas_supernets/transformers/bert_squad_nas/best_result/pareto_front_subnets.pth"
+    )
     nncf_config_path = "/home/jpmunoz/bnas_supernets/transformers/bert_squad_nas/best_result/nncf_config.json"
 
     # prepare model and nncf_config
@@ -244,12 +314,23 @@ if __name__ == "__main__":
     nncf_config = NNCFConfig.from_dict(loaded_json)
     nncf_config.device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    # [optional] load search_progression.csv and generate pareto front subnets
+    # TrainedSuperNet.generate_pareto_front_subnets_from_csv(
+    #     '/home/jpmunoz/bnas_supernets/transformers/bert_squad_nas/best_result/search_result/search_progression.csv',
+    #     '/home/jpmunoz/bnas_supernets/transformers/bert_squad_nas/best_result/pareto_front_subnets.pth'
+    # )
+
     # TrainedSuperNet interface
     train_supernet = TrainedSuperNet.from_checkpoint(
         model, nncf_config, supernet_elasticity_path, supernet_weights_path
     )
-    train_supernet.activate_minimal_subnet()
-    print(f"current config: {train_supernet.get_active_config()}")
+
+    # use pareto_front_subnets_path to activate a pareto front subnet
+    pareto_front_subnets = torch.load(pareto_front_subnets_path, map_location=nncf_config.device)
+    # for example, choose a pareto front subnet with index = 5
+    choose_idx = 5
+    print(f"activated subnet info: {pareto_front_subnets[choose_idx]}")
+    train_supernet.activate_config(pareto_front_subnets[choose_idx]["subnet_config"])
 
     # type 1: get a clean torch network
     clean_subnet = train_supernet.get_clean_subnet()
