@@ -208,7 +208,7 @@ class SupernetTrainer(Trainer):
         return loss.detach()
 
     def compute_kd_loss(self, model, teacher_model, inputs, temperature = 2.0, distillation_weight = 0.9, return_outputs=False):
-        # copy from jpqd
+        # copy from movement sparcicity
 
         def compute_distillation_loss(student_outputs):
             with torch.no_grad():
